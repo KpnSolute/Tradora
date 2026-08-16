@@ -18,6 +18,7 @@ import { db, automationsTable, tradesTable, tradingAccountsTable } from "@worksp
 import { eq, and } from "drizzle-orm";
 import { getBrokerClient } from "./broker-factory";
 import { getTicker } from "./market-data";
+import { assertOrderPlacementQuarantined } from "./order-quarantine";
 
 // ─── Frontend client subscriptions ───────────────────────────────────────────
 
@@ -70,6 +71,8 @@ async function fireAutomation(rule: any, currentPrice: number): Promise<void> {
     .where(eq(automationsTable.id, rule.id));
 
   try {
+    assertOrderPlacementQuarantined("WebSocket automation execution");
+
     const qty = parseFloat(rule.quantity);
     const limitPrice = rule.limitPrice ? parseFloat(rule.limitPrice) : undefined;
 

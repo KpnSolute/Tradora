@@ -12,8 +12,15 @@ import { db, tradingAccountsTable } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
 import { AlpacaClient, toAlpacaSymbol } from "../lib/alpaca";
 import { logger } from "../lib/logger";
+import { ORDER_PLACEMENT_QUARANTINE_MESSAGE } from "../lib/order-quarantine";
 
 const router: IRouter = Router();
+
+function rejectOrderPlacement(res: any, userId: number): boolean {
+  logger.warn({ userId }, ORDER_PLACEMENT_QUARANTINE_MESSAGE);
+  res.status(503).json({ error: ORDER_PLACEMENT_QUARANTINE_MESSAGE });
+  return true;
+}
 
 function requireAuth(req: any, res: any): boolean {
   if (!req.session?.userId) {
@@ -134,6 +141,7 @@ router.get("/alpaca/orders", async (req, res): Promise<void> => {
 // POST /alpaca/orders — place an order
 router.post("/alpaca/orders", async (req, res): Promise<void> => {
   if (!requireAuth(req, res)) return;
+  if (rejectOrderPlacement(res, req.session.userId!)) return;
   const client = await getAlpacaClient(req.session.userId!, res);
   if (!client) return;
 

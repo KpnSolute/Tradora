@@ -2,11 +2,12 @@
  * Factory — given a DB trading account row, return the right broker client.
  * Exposes a common BrokerClient interface for order routing.
  */
-import { AlpacaClient, toAlpacaSymbol } from "./alpaca";
-import { CoinbaseClient, toCoinbaseSymbol } from "./coinbase";
+import { AlpacaClient } from "./alpaca";
+import { CoinbaseClient } from "./coinbase";
 import { BinanceClient, toBinanceSymbol } from "./binance";
 import { KrakenPrivateClient } from "./kraken-private";
 import { BybitClient, toBybitSymbol } from "./bybit";
+import { assertOrderPlacementQuarantined } from "./order-quarantine";
 
 export interface BrokerOrderInput {
   symbol: string;    // our format: BTC-USDT
@@ -105,8 +106,8 @@ class AlpacaAdapter {
     return os.map(o => ({ id: o.id, symbol: o.symbol, side: o.side as "buy" | "sell", type: o.type, qty: parseFloat(o.qty), filledQty: parseFloat(o.filled_qty), filledAvgPrice: o.filled_avg_price ? parseFloat(o.filled_avg_price) : null, status: o.status, limitPrice: o.limit_price ? parseFloat(o.limit_price) : null, submittedAt: o.submitted_at, filledAt: o.filled_at ?? null }));
   }
   async placeOrder(input: BrokerOrderInput): Promise<BrokerOrderResult> {
-    const o = await this.client.placeOrder({ symbol: toAlpacaSymbol(input.symbol), side: input.side, type: input.type, time_in_force: "gtc", qty: String(input.qty), limit_price: input.limitPrice ? String(input.limitPrice) : undefined });
-    return { id: o.id, symbol: o.symbol, side: o.side as "buy" | "sell", type: o.type, qty: parseFloat(o.qty), status: o.status, submittedAt: o.submitted_at };
+    void input;
+    assertOrderPlacementQuarantined("AlpacaAdapter.placeOrder");
   }
   async cancelOrder(orderId: string): Promise<void> { await this.client.cancelOrder(orderId); }
 }
@@ -119,7 +120,7 @@ class CoinbaseAdapter {
   async getAccount(): Promise<BrokerAccount> { const a = await this.client.getAccount(); return { ...a, mode: this.mode }; }
   async getPositions(): Promise<BrokerPosition[]> { return this.client.getPositions(); }
   async getOrders(limit = 50): Promise<BrokerOrder[]> { return this.client.getOrders(limit); }
-  async placeOrder(input: BrokerOrderInput): Promise<BrokerOrderResult> { const o = await this.client.placeOrder({ ...input, symbol: toCoinbaseSymbol(input.symbol) }); return { id: o.id, symbol: o.symbol, side: o.side, type: o.type, qty: o.qty, status: o.status, submittedAt: o.submittedAt }; }
+  async placeOrder(input: BrokerOrderInput): Promise<BrokerOrderResult> { void input; assertOrderPlacementQuarantined("CoinbaseAdapter.placeOrder"); }
   async cancelOrder(orderId: string): Promise<void> { await this.client.cancelOrder(orderId); }
 }
 
@@ -131,7 +132,7 @@ class BinanceAdapter {
   async getAccount(): Promise<BrokerAccount> { const a = await this.client.getAccount(); return { ...a, mode: this.mode }; }
   async getPositions(): Promise<BrokerPosition[]> { return this.client.getPositions(); }
   async getOrders(limit = 50): Promise<BrokerOrder[]> { return this.client.getOrders(limit); }
-  async placeOrder(input: BrokerOrderInput): Promise<BrokerOrderResult> { const o = await this.client.placeOrder(input); return { id: o.id, symbol: o.symbol, side: o.side, type: o.type, qty: o.qty, status: o.status, submittedAt: o.submittedAt }; }
+  async placeOrder(input: BrokerOrderInput): Promise<BrokerOrderResult> { void input; assertOrderPlacementQuarantined("BinanceAdapter.placeOrder"); }
   async cancelOrder(orderId: string): Promise<void> { await this.client.cancelOrder(orderId); }
 }
 
@@ -143,7 +144,7 @@ class KrakenAdapter {
   async getAccount(): Promise<BrokerAccount> { const a = await this.client.getAccount(); return { ...a, mode: this.mode }; }
   async getPositions(): Promise<BrokerPosition[]> { return this.client.getPositions(); }
   async getOrders(limit = 50): Promise<BrokerOrder[]> { return this.client.getOrders(limit); }
-  async placeOrder(input: BrokerOrderInput): Promise<BrokerOrderResult> { const o = await this.client.placeOrder(input); return { id: o.id, symbol: o.symbol, side: o.side, type: o.type, qty: o.qty, status: o.status, submittedAt: o.submittedAt }; }
+  async placeOrder(input: BrokerOrderInput): Promise<BrokerOrderResult> { void input; assertOrderPlacementQuarantined("KrakenAdapter.placeOrder"); }
   async cancelOrder(orderId: string): Promise<void> { await this.client.cancelOrder(orderId); }
 }
 
@@ -155,6 +156,6 @@ class BybitAdapter {
   async getAccount(): Promise<BrokerAccount> { const a = await this.client.getAccount(); return { ...a, mode: this.mode }; }
   async getPositions(): Promise<BrokerPosition[]> { return this.client.getPositions(); }
   async getOrders(limit = 50): Promise<BrokerOrder[]> { return this.client.getOrders(limit); }
-  async placeOrder(input: BrokerOrderInput): Promise<BrokerOrderResult> { const o = await this.client.placeOrder(input); return { id: o.id, symbol: o.symbol, side: o.side, type: o.type, qty: o.qty, status: o.status, submittedAt: o.submittedAt }; }
+  async placeOrder(input: BrokerOrderInput): Promise<BrokerOrderResult> { void input; assertOrderPlacementQuarantined("BybitAdapter.placeOrder"); }
   async cancelOrder(orderId: string): Promise<void> { await this.client.cancelOrder(orderId); }
 }
