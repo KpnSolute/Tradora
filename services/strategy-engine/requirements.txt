@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+pandas
+numpy
+alpaca-py
+python-dotenv
+APScheduler
+httpx
+pytest

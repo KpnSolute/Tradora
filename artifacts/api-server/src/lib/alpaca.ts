@@ -1,4 +1,5 @@
 import { logger } from "./logger";
+import { assertOrderPlacementQuarantined } from "./order-quarantine";
 
 const PAPER_BASE = "https://paper-api.alpaca.markets";
 const LIVE_BASE = "https://api.alpaca.markets";
@@ -120,10 +121,8 @@ export class AlpacaClient {
   }
 
   async placeOrder(order: AlpacaOrderInput): Promise<AlpacaOrder> {
-    return this.request<AlpacaOrder>("/v2/orders", {
-      method: "POST",
-      body: JSON.stringify(order),
-    });
+    void order;
+    assertOrderPlacementQuarantined("AlpacaClient.placeOrder");
   }
 
   async cancelOrder(orderId: string): Promise<void> {

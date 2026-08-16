@@ -13,8 +13,15 @@ import { eq, and } from "drizzle-orm";
 import { getBrokerClient } from "../lib/broker-factory";
 import { getTicker } from "../lib/market-data";
 import { logger } from "../lib/logger";
+import { ORDER_PLACEMENT_QUARANTINE_MESSAGE } from "../lib/order-quarantine";
 
 const router: IRouter = Router();
+
+function rejectOrderPlacement(res: any, userId: number, exchange: string): boolean {
+  logger.warn({ userId, exchange }, ORDER_PLACEMENT_QUARANTINE_MESSAGE);
+  res.status(503).json({ error: ORDER_PLACEMENT_QUARANTINE_MESSAGE });
+  return true;
+}
 
 function requireAuth(req: any, res: any): boolean {
   if (!req.session?.userId) {
@@ -167,6 +174,7 @@ router.get("/broker-accounts/:exchange/orders", async (req, res): Promise<void> 
 // POST /broker-accounts/:exchange/orders
 router.post("/broker-accounts/:exchange/orders", async (req, res): Promise<void> => {
   if (!requireAuth(req, res)) return;
+  if (rejectOrderPlacement(res, req.session.userId!, req.params.exchange)) return;
   const row = await getAccount(req.session.userId!, req.params.exchange, res);
   if (!row) return;
 
