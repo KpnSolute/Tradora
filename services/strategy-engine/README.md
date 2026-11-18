@@ -7,6 +7,14 @@ never be called directly by browser code.
 V1 permits only `analysis`, `dry_run`, and `paper` modes. It exposes no order
 submission endpoint and defaults Alpaca configuration to the paper endpoint.
 
+## Analyst (Agent Feed)
+
+`POST /api/v1/analyst/intents` takes a bar window plus paper equity and returns
+one reviewable `TradeIntent` (side, size, stop, target, confidence, thesis) or
+`intent: null` with a reason for standing aside. Intents are appended to
+`logs/intents.db` for audit. The endpoint never places an order: approval into
+paper trading happens in the Express gateway's `trade_intents` table.
+
 ## Local validation
 
 ```powershell

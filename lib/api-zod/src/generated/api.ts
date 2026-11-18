@@ -659,6 +659,134 @@ export const DeleteAutomationResponse = zod.void()
 
 
 /**
+ * @summary List trade intents from the analyst
+ */
+export const ListTradeIntentsResponseItem = zod.object({
+  "id": zod.number(),
+  "userId": zod.number(),
+  "symbol": zod.string(),
+  "side": zod.enum(['buy', 'sell']),
+  "quantity": zod.number(),
+  "orderType": zod.enum(['market']),
+  "referencePrice": zod.number(),
+  "stopLoss": zod.number(),
+  "takeProfit": zod.number(),
+  "confidence": zod.number(),
+  "thesis": zod.string(),
+  "strategyName": zod.string(),
+  "status": zod.enum(['pending', 'approved', 'rejected']),
+  "mode": zod.enum(['paper']),
+  "decisionNote": zod.string().nullish(),
+  "decidedAt": zod.coerce.date().nullish(),
+  "tradeId": zod.number().nullish(),
+  "expiresAt": zod.coerce.date().nullish(),
+  "createdAt": zod.coerce.date()
+})
+export const ListTradeIntentsResponse = zod.array(ListTradeIntentsResponseItem)
+
+
+/**
+ * @summary Ask the analyst for a paper trade intent
+ */
+export const GenerateTradeIntentBody = zod.object({
+  "symbol": zod.string().describe('One of the symbols served by the markets endpoint')
+})
+
+export const GenerateTradeIntentResponse = zod.object({
+  "intent": zod.union([zod.object({
+  "id": zod.number(),
+  "userId": zod.number(),
+  "symbol": zod.string(),
+  "side": zod.enum(['buy', 'sell']),
+  "quantity": zod.number(),
+  "orderType": zod.enum(['market']),
+  "referencePrice": zod.number(),
+  "stopLoss": zod.number(),
+  "takeProfit": zod.number(),
+  "confidence": zod.number(),
+  "thesis": zod.string(),
+  "strategyName": zod.string(),
+  "status": zod.enum(['pending', 'approved', 'rejected']),
+  "mode": zod.enum(['paper']),
+  "decisionNote": zod.string().nullish(),
+  "decidedAt": zod.coerce.date().nullish(),
+  "tradeId": zod.number().nullish(),
+  "expiresAt": zod.coerce.date().nullish(),
+  "createdAt": zod.coerce.date()
+}),zod.null()]).optional(),
+  "note": zod.string()
+})
+
+
+/**
+ * @summary Approve an intent into simulated paper trading
+ */
+export const ApproveTradeIntentParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const ApproveTradeIntentResponse = zod.object({
+  "id": zod.number(),
+  "userId": zod.number(),
+  "symbol": zod.string(),
+  "side": zod.enum(['buy', 'sell']),
+  "quantity": zod.number(),
+  "orderType": zod.enum(['market']),
+  "referencePrice": zod.number(),
+  "stopLoss": zod.number(),
+  "takeProfit": zod.number(),
+  "confidence": zod.number(),
+  "thesis": zod.string(),
+  "strategyName": zod.string(),
+  "status": zod.enum(['pending', 'approved', 'rejected']),
+  "mode": zod.enum(['paper']),
+  "decisionNote": zod.string().nullish(),
+  "decidedAt": zod.coerce.date().nullish(),
+  "tradeId": zod.number().nullish(),
+  "expiresAt": zod.coerce.date().nullish(),
+  "createdAt": zod.coerce.date()
+})
+
+
+/**
+ * @summary Reject an intent without trading
+ */
+export const RejectTradeIntentParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const rejectTradeIntentBodyReasonMax = 500;
+
+
+
+export const RejectTradeIntentBody = zod.object({
+  "reason": zod.string().max(rejectTradeIntentBodyReasonMax).optional()
+})
+
+export const RejectTradeIntentResponse = zod.object({
+  "id": zod.number(),
+  "userId": zod.number(),
+  "symbol": zod.string(),
+  "side": zod.enum(['buy', 'sell']),
+  "quantity": zod.number(),
+  "orderType": zod.enum(['market']),
+  "referencePrice": zod.number(),
+  "stopLoss": zod.number(),
+  "takeProfit": zod.number(),
+  "confidence": zod.number(),
+  "thesis": zod.string(),
+  "strategyName": zod.string(),
+  "status": zod.enum(['pending', 'approved', 'rejected']),
+  "mode": zod.enum(['paper']),
+  "decisionNote": zod.string().nullish(),
+  "decidedAt": zod.coerce.date().nullish(),
+  "tradeId": zod.number().nullish(),
+  "expiresAt": zod.coerce.date().nullish(),
+  "createdAt": zod.coerce.date()
+})
+
+
+/**
  * @summary Toggle paper or real trading mode
  */
 export const UpdateTradingModeBody = zod.object({

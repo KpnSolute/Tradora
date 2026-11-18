@@ -11,6 +11,7 @@ import alpacaRouter      from "./alpaca";
 import brokerRouter      from "./broker";
 import automationsRouter from "./automations";
 import strategyEngineRouter from "./strategy-engine";
+import agentFeedRouter     from "./agent-feed";
 
 const router: IRouter = Router();
 
@@ -26,5 +27,6 @@ router.use(alpacaRouter);
 router.use(brokerRouter);
 router.use(automationsRouter);
 router.use(strategyEngineRouter);
+router.use(agentFeedRouter);
 
 export default router;

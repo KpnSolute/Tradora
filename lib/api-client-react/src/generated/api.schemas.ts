@@ -368,6 +368,78 @@ export interface AlpacaOrderInput {
   stop_price?: number;
 }
 
+export type TradeIntentSide = typeof TradeIntentSide[keyof typeof TradeIntentSide];
+
+
+export const TradeIntentSide = {
+  buy: 'buy',
+  sell: 'sell',
+} as const;
+
+export type TradeIntentOrderType = typeof TradeIntentOrderType[keyof typeof TradeIntentOrderType];
+
+
+export const TradeIntentOrderType = {
+  market: 'market',
+} as const;
+
+export type TradeIntentStatus = typeof TradeIntentStatus[keyof typeof TradeIntentStatus];
+
+
+export const TradeIntentStatus = {
+  pending: 'pending',
+  approved: 'approved',
+  rejected: 'rejected',
+} as const;
+
+export type TradeIntentMode = typeof TradeIntentMode[keyof typeof TradeIntentMode];
+
+
+export const TradeIntentMode = {
+  paper: 'paper',
+} as const;
+
+export interface TradeIntent {
+  id: number;
+  userId: number;
+  symbol: string;
+  side: TradeIntentSide;
+  quantity: number;
+  orderType: TradeIntentOrderType;
+  referencePrice: number;
+  stopLoss: number;
+  takeProfit: number;
+  confidence: number;
+  thesis: string;
+  strategyName: string;
+  status: TradeIntentStatus;
+  mode: TradeIntentMode;
+  /** @nullable */
+  decisionNote?: string | null;
+  /** @nullable */
+  decidedAt?: string | null;
+  /** @nullable */
+  tradeId?: number | null;
+  /** @nullable */
+  expiresAt?: string | null;
+  createdAt: string;
+}
+
+export interface TradeIntentRequest {
+  /** One of the symbols served by the markets endpoint */
+  symbol: string;
+}
+
+export interface TradeIntentGeneration {
+  intent?: TradeIntent | null;
+  note: string;
+}
+
+export interface TradeIntentRejection {
+  /** @maxLength 500 */
+  reason?: string;
+}
+
 export type TradingModeInputMode = typeof TradingModeInputMode[keyof typeof TradingModeInputMode];
 
 

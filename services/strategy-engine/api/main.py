@@ -6,9 +6,17 @@ from collections.abc import AsyncIterator
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 
+from analysts.store import IntentStore
+from analysts.technical import TechnicalAnalyst
 from api.auth import require_auth
 from config.settings import KILL_SWITCH_PATH, LOG_DIR, settings
-from core.models import Event, EventType, KillSwitchRequest, ScanRequest
+from core.models import (
+    AnalystRequest,
+    Event,
+    EventType,
+    KillSwitchRequest,
+    ScanRequest,
+)
 from engine.safety import is_kill_switch_active
 from events.bus import EventBus
 from strategies.registry import registry
@@ -16,7 +24,11 @@ from strategies.registry import registry
 
 app = FastAPI(title="Tradora Strategy Engine", version="0.1.0")
 bus = EventBus(LOG_DIR / "events.db")
+intent_store = IntentStore(LOG_DIR / "intents.db")
+analyst = TechnicalAnalyst()
 auth_dependencies = [Depends(require_auth)]
+
+ALLOWED_MODES = {"analysis", "dry_run", "paper"}
 
 
 def health_payload() -> dict[str, str]:
@@ -88,6 +100,50 @@ def run_scan(request: ScanRequest) -> dict[str, object]:
     )
     bus.publish(event)
     return {"status": "accepted", "mode": request.mode, "event_id": event.event_id}
+
+
+@app.post("/api/v1/analyst/intents", dependencies=auth_dependencies)
+@app.post("/analyst/intents", dependencies=auth_dependencies)
+def analyse(request: AnalystRequest) -> dict[str, object]:
+    """Turn a bar window into a paper-only trade intent with a written thesis."""
+    if request.mode not in ALLOWED_MODES:
+        raise HTTPException(
+            status_code=400,
+            detail="mode must be analysis, dry_run, or paper",
+        )
+    if is_kill_switch_active():
+        raise HTTPException(
+            status_code=409,
+            detail="Kill switch is active: the analyst will not emit new intents",
+        )
+
+    outcome = analyst.analyse(request)
+    if outcome.intent is not None:
+        intent_store.save(outcome.intent)
+        bus.publish(
+            Event(
+                type=EventType.SIGNAL_GENERATED,
+                severity="info",
+                symbol=outcome.intent.symbol,
+                strategy_name=analyst.name,
+                payload={
+                    "intent_id": outcome.intent.intent_id,
+                    "side": outcome.intent.side.value,
+                    "confidence": outcome.intent.confidence,
+                    "mode": request.mode,
+                },
+            )
+        )
+
+    return {
+        "intent": (
+            outcome.intent.model_dump(mode="json")
+            if outcome.intent is not None
+            else None
+        ),
+        "note": outcome.note,
+        "strategy": {"name": analyst.name, "version": analyst.version},
+    }
 
 
 @app.get("/api/v1/events/stream", dependencies=auth_dependencies)

@@ -30,6 +30,8 @@ tags:
     description: Generic multi-broker endpoints
   - name: automations
     description: Price-triggered automation rules
+  - name: agent-feed
+    description: Human-in-the-loop trade intents (paper only)
 paths:
   /healthz:
     get:
@@ -861,6 +863,150 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /agent-feed:
+    get:
+      operationId: listTradeIntents
+      tags: [agent-feed]
+      summary: List trade intents from the analyst
+      responses:
+        "200":
+          description: Trade intents, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TradeIntent"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /agent-feed/generate:
+    post:
+      operationId: generateTradeIntent
+      tags: [agent-feed]
+      summary: Ask the analyst for a paper trade intent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TradeIntentRequest"
+      responses:
+        "201":
+          description: Intent generated and stored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TradeIntentGeneration"
+        "200":
+          description: No intent (the analyst stood aside) or a duplicate pending intent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TradeIntentGeneration"
+        "400":
+          description: Invalid or unsupported symbol
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: Market data or strategy engine unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /agent-feed/{id}/approve:
+    post:
+      operationId: approveTradeIntent
+      tags: [agent-feed]
+      summary: Approve an intent into simulated paper trading
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Intent approved and simulated as a paper trade
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TradeIntent"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Intent not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Intent already decided or expired
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /agent-feed/{id}/reject:
+    post:
+      operationId: rejectTradeIntent
+      tags: [agent-feed]
+      summary: Reject an intent without trading
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TradeIntentRejection"
+      responses:
+        "200":
+          description: Intent rejected
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TradeIntent"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Intent not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Intent already decided
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /settings/trading-mode:
     patch:
       operationId: updateTradingMode
@@ -1278,6 +1424,82 @@ components:
           type: number
         stop_price:
           type: number
+
+    TradeIntent:
+      type: object
+      required: [id, userId, symbol, side, quantity, orderType, referencePrice, stopLoss, takeProfit, confidence, thesis, strategyName, status, mode, createdAt]
+      properties:
+        id:
+          type: integer
+        userId:
+          type: integer
+        symbol:
+          type: string
+        side:
+          type: string
+          enum: [buy, sell]
+        quantity:
+          type: number
+        orderType:
+          type: string
+          enum: [market]
+        referencePrice:
+          type: number
+        stopLoss:
+          type: number
+        takeProfit:
+          type: number
+        confidence:
+          type: number
+        thesis:
+          type: string
+        strategyName:
+          type: string
+        status:
+          type: string
+          enum: [pending, approved, rejected]
+        mode:
+          type: string
+          enum: [paper]
+        decisionNote:
+          type: ["string", "null"]
+        decidedAt:
+          type: ["string", "null"]
+          format: date-time
+        tradeId:
+          type: ["integer", "null"]
+        expiresAt:
+          type: ["string", "null"]
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+
+    TradeIntentRequest:
+      type: object
+      required: [symbol]
+      properties:
+        symbol:
+          type: string
+          description: One of the symbols served by the markets endpoint
+
+    TradeIntentGeneration:
+      type: object
+      required: [note]
+      properties:
+        intent:
+          oneOf:
+            - $ref: "#/components/schemas/TradeIntent"
+            - type: "null"
+        note:
+          type: string
+
+    TradeIntentRejection:
+      type: object
+      properties:
+        reason:
+          type: string
+          maxLength: 500
 
     TradingModeInput:
       type: object
