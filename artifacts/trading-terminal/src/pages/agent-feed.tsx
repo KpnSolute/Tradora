@@ -22,6 +22,7 @@ import {
   TrendingDown,
   Loader2,
 } from 'lucide-react';
+import * as Dialog from '@radix-ui/react-dialog';
 import { cn, formatCompactPrice } from '@/lib/utils';
 import { toast } from '@/hooks/use-toast';
 
@@ -43,6 +44,8 @@ export default function AgentFeed() {
 
   const [selectedSymbol, setSelectedSymbol] = useState('');
   const [lastNote, setLastNote] = useState<string | null>(null);
+  const [rejectTarget, setRejectTarget] = useState<{ id: number; symbol: string; side: string } | null>(null);
+  const [reason, setReason] = useState('');
 
   // Fall back to the first market so the picker is never blank.
   const symbol = selectedSymbol || markets?.[0]?.symbol || '';
@@ -100,13 +103,31 @@ export default function AgentFeed() {
     );
   };
 
-  const handleReject = (id: number) => {
+  const openReject = (intent: { id: number; symbol: string; side: string }) => {
+    setReason('');
+    setRejectTarget(intent);
+  };
+
+  const closeReject = () => {
+    setRejectTarget(null);
+    setReason('');
+  };
+
+  const submitReject = () => {
+    if (!rejectTarget) return;
+    const note = reason.trim();
     reject.mutate(
-      { id, data: {} },
+      { id: rejectTarget.id, data: note ? { reason: note } : {} },
       {
         onSuccess: () => {
+          closeReject();
           refreshFeed();
-          toast({ title: 'Intent rejected', description: 'No trade was simulated.' });
+          toast({
+            title: `Intent #${rejectTarget.id} rejected`,
+            description: note
+              ? 'No trade was simulated. Your reason is on record.'
+              : 'No trade was simulated.',
+          });
         },
         onError: (error: any) => {
           refreshFeed();
@@ -254,7 +275,7 @@ export default function AgentFeed() {
               </span>
               <div className="flex gap-2">
                 <button
-                  onClick={() => handleReject(intent.id)}
+                  onClick={() => openReject(intent)}
                   disabled={reject.isPending || approve.isPending}
                   className="flex items-center gap-1.5 px-3 py-1.5 border border-border text-xs hover:bg-down/20 hover:text-down hover:border-down/40 transition-colors disabled:opacity-50"
                 >
@@ -317,6 +338,63 @@ export default function AgentFeed() {
           );
         })}
       </div>
+
+      <Dialog.Root
+        open={rejectTarget !== null}
+        onOpenChange={(open) => {
+          if (!open && !reject.isPending) closeReject();
+        }}
+      >
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 bg-background/80 backdrop-blur-sm z-50" />
+          <Dialog.Content className="fixed left-[50%] top-[50%] z-50 w-full max-w-lg translate-x-[-50%] translate-y-[-50%] border border-border bg-card p-6 shadow-lg font-mono">
+            <Dialog.Title className="text-sm font-bold tracking-widest flex items-center gap-2 border-b border-border pb-3">
+              <XCircle className="w-4 h-4 text-down" />
+              REJECT INTENT
+            </Dialog.Title>
+            <Dialog.Description className="text-[11px] text-muted-foreground mt-3 leading-relaxed">
+              {rejectTarget
+                ? `${rejectTarget.side.toUpperCase()} ${rejectTarget.symbol} · #${rejectTarget.id}. Nothing is simulated. Recording why keeps the decision auditable.`
+                : ''}
+            </Dialog.Description>
+
+            <label htmlFor="reject-reason" className="block text-[10px] text-muted-foreground mt-4 mb-1">
+              REASON (OPTIONAL)
+            </label>
+            <textarea
+              id="reject-reason"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              maxLength={500}
+              rows={3}
+              autoFocus
+              placeholder="e.g. Chasing a breakdown; waiting for a lower-high retest."
+              className="w-full bg-input border border-border text-foreground px-3 py-2 text-xs focus:outline-none focus:border-primary resize-none"
+            />
+            <div className="text-[10px] text-muted-foreground text-right mt-1 tabular-nums">
+              {reason.length}/500
+            </div>
+
+            <div className="flex justify-end gap-2 mt-4">
+              <button
+                onClick={closeReject}
+                disabled={reject.isPending}
+                className="px-3 py-1.5 border border-border text-xs hover:bg-muted transition-colors disabled:opacity-50"
+              >
+                CANCEL
+              </button>
+              <button
+                onClick={submitReject}
+                disabled={reject.isPending}
+                className="flex items-center gap-1.5 px-3 py-1.5 border border-down/50 bg-down/20 text-down text-xs font-bold hover:bg-down/30 transition-colors disabled:opacity-50"
+              >
+                {reject.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <XCircle className="w-3 h-3" />}
+                {reject.isPending ? 'RECORDING…' : 'RECORD REJECTION'}
+              </button>
+            </div>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
     </div>
   );
 }
