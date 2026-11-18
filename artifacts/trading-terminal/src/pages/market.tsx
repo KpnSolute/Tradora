@@ -8,6 +8,9 @@ import {
   usePlaceAlpacaOrder,
   usePlaceBrokerOrder,
   useListAccounts,
+  getGetMarketTickerQueryKey,
+  getGetMarketCandlesQueryKey,
+  getGetMarketSignalsQueryKey,
   getListTradesQueryKey,
   getGetPortfolioSummaryQueryKey,
   getListPositionsQueryKey,
@@ -78,9 +81,9 @@ export default function Market() {
   const queryClient = useQueryClient();
   const [interval, setIntervalState] = useState<Interval>('1h');
   
-  const { data: ticker } = useGetMarketTicker(safeSymbol, { query: { refetchInterval: 5000 } });
-  const { data: candles } = useGetMarketCandles(safeSymbol, interval, { query: { refetchInterval: 30000 } });
-  const { data: signals } = useGetMarketSignals(safeSymbol, { query: { refetchInterval: 60000 } });
+  const { data: ticker } = useGetMarketTicker(safeSymbol, { query: { queryKey: getGetMarketTickerQueryKey(safeSymbol), refetchInterval: 5000 } });
+  const { data: candles } = useGetMarketCandles(safeSymbol, interval, { query: { queryKey: getGetMarketCandlesQueryKey(safeSymbol, interval), refetchInterval: 30000 } });
+  const { data: signals } = useGetMarketSignals(safeSymbol, { query: { queryKey: getGetMarketSignalsQueryKey(safeSymbol), refetchInterval: 60000 } });
   
   const createTrade = useCreateTrade();
   const placeAlpaca = usePlaceAlpacaOrder();

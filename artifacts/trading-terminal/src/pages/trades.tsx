@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useListTrades, useGetTrade } from '@workspace/api-client-react';
+import { useListTrades, useGetTrade, getListTradesQueryKey, getGetTradeQueryKey } from '@workspace/api-client-react';
 import { History, Search, X, ArrowUpRight, ArrowDownRight, Clock, Info, ExternalLink } from 'lucide-react';
 import { cn, formatPrice } from '@/lib/utils';
 import { Link } from 'wouter';
@@ -7,7 +7,7 @@ import * as Dialog from '@radix-ui/react-dialog';
 
 function TradeDetailsDialog({ tradeId, open, onOpenChange }: { tradeId: number | null, open: boolean, onOpenChange: (open: boolean) => void }) {
   const { data: trade, isLoading } = useGetTrade(tradeId as number, {
-    query: { enabled: !!tradeId }
+    query: { queryKey: getGetTradeQueryKey(tradeId as number), enabled: !!tradeId }
   });
 
   return (
@@ -120,7 +120,7 @@ function TradeDetailsDialog({ tradeId, open, onOpenChange }: { tradeId: number |
 }
 
 export default function Trades() {
-  const { data: trades } = useListTrades({ query: { refetchInterval: 15000 } });
+  const { data: trades } = useListTrades({ query: { queryKey: getListTradesQueryKey(), refetchInterval: 15000 } });
   const [filterSymbol, setFilterSymbol] = useState('');
   const [selectedTrade, setSelectedTrade] = useState<number | null>(null);
 

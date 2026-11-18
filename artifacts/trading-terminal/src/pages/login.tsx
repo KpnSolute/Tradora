@@ -70,7 +70,7 @@ export default function Login() {
 
           {login.error && (
             <div className="p-3 border border-down/50 bg-down/10 text-down text-sm">
-              {login.error.error || 'Authentication failed'}
+              {login.error.data?.error || 'Authentication failed'}
             </div>
           )}
 

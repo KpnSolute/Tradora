@@ -69,7 +69,7 @@ export default function Register() {
 
           {registerMutation.error && (
             <div className="p-3 border border-down/50 bg-down/10 text-down text-sm">
-              {registerMutation.error.error || 'Registration failed'}
+              {registerMutation.error.data?.error || 'Registration failed'}
             </div>
           )}
 

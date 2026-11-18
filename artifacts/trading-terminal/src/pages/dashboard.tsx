@@ -6,19 +6,20 @@ import {
   useListMarkets,
   useAddToWatchlist,
   useRemoveFromWatchlist,
-  getGetWatchlistQueryKey
+  getGetWatchlistQueryKey,
+  getGetPortfolioSummaryQueryKey,
+  getGetTrendingMarketsQueryKey
 } from '@workspace/api-client-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Link } from 'wouter';
 import { TrendingUp, TrendingDown, Activity, Plus, X, Search, DollarSign, Percent, List } from 'lucide-react';
 import { cn, formatPrice, formatPct, formatNumber, formatCompactPrice } from '@/lib/utils';
-import type { MarketTicker, WatchlistInput } from '@workspace/api-client-react/src/generated/api.schemas';
 
 export default function Dashboard() {
   const queryClient = useQueryClient();
-  const { data: summary } = useGetPortfolioSummary({ query: { refetchInterval: 5000 } });
+  const { data: summary } = useGetPortfolioSummary({ query: { queryKey: getGetPortfolioSummaryQueryKey(), refetchInterval: 5000 } });
   const { data: watchlist } = useGetWatchlist();
-  const { data: trending } = useGetTrendingMarkets({ query: { refetchInterval: 5000 } });
+  const { data: trending } = useGetTrendingMarkets({ query: { queryKey: getGetTrendingMarketsQueryKey(), refetchInterval: 5000 } });
   const { data: markets } = useListMarkets();
   
   const addWatchlist = useAddToWatchlist();

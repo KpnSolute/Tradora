@@ -3,6 +3,9 @@ import {
   useGetPortfolioSummary,
   useListPositions,
   useGetUnifiedPortfolio,
+  getGetPortfolioSummaryQueryKey,
+  getListPositionsQueryKey,
+  getGetUnifiedPortfolioQueryKey,
 } from '@workspace/api-client-react';
 import { Activity, DollarSign, Percent, TrendingUp, TrendingDown, Target, Skull, Layers, ChevronDown, ChevronUp } from 'lucide-react';
 import { cn, formatPrice, formatPct } from '@/lib/utils';
@@ -27,9 +30,9 @@ function ExchangeBadge({ exchange }: { exchange: string }) {
 }
 
 export default function Portfolio() {
-  const { data: summary } = useGetPortfolioSummary({ query: { refetchInterval: 10000 } });
-  const { data: positions } = useListPositions({ query: { refetchInterval: 5000 } });
-  const { data: unified, isLoading: unifiedLoading } = useGetUnifiedPortfolio({ query: { refetchInterval: 15000 } });
+  const { data: summary } = useGetPortfolioSummary({ query: { queryKey: getGetPortfolioSummaryQueryKey(), refetchInterval: 10000 } });
+  const { data: positions } = useListPositions({ query: { queryKey: getListPositionsQueryKey(), refetchInterval: 5000 } });
+  const { data: unified, isLoading: unifiedLoading } = useGetUnifiedPortfolio({ query: { queryKey: getGetUnifiedPortfolioQueryKey(), refetchInterval: 15000 } });
 
   const [showUnified, setShowUnified] = useState(true);
 

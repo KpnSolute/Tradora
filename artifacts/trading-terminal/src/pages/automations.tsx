@@ -50,7 +50,7 @@ const BROKER_LABELS: Record<string, string> = {
 export default function Automations() {
   const queryClient = useQueryClient();
   const { user } = useAuth();
-  const { data: automations, isLoading } = useListAutomations({ query: { refetchInterval: 5000 } });
+  const { data: automations, isLoading } = useListAutomations({ query: { queryKey: getListAutomationsQueryKey(), refetchInterval: 5000 } });
   const { data: accounts } = useListAccounts();
   const { data: markets } = useListMarkets();
   const createAuto = useCreateAutomation();
