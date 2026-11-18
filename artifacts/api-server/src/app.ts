@@ -1,6 +1,8 @@
 import express, { type Express } from "express";
 import cors from "cors";
 import pinoHttp from "pino-http";
+import fs from "node:fs";
+import path from "node:path";
 import router from "./routes";
 import { logger } from "./lib/logger";
 import { sessionMiddleware } from "./lib/session";
@@ -48,6 +50,23 @@ app.use(express.urlencoded({ extended: true }));
 app.use(sessionMiddleware);
 
 app.use("/api", router);
+
+/**
+ * Production topology: one origin for the SPA and the API. Serving the built
+ * terminal here keeps the session cookie same-site and the /ws upgrade
+ * same-origin, so no CORS allowlist or cross-site cookie is needed.
+ */
+const webRoot = path.resolve(process.cwd(), "artifacts/trading-terminal/dist/public");
+if (process.env.SERVE_WEB === "true" && fs.existsSync(path.join(webRoot, "index.html"))) {
+  app.use(express.static(webRoot));
+  app.use((req, res, next) => {
+    if (req.method !== "GET" || req.path.startsWith("/api") || req.path.startsWith("/ws")) {
+      next();
+      return;
+    }
+    res.sendFile(path.join(webRoot, "index.html"));
+  });
+}
 
 export default app;
 export { sessionMiddleware };

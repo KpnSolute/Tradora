@@ -82,7 +82,7 @@ export default function Market() {
   const [interval, setIntervalState] = useState<Interval>('1h');
   
   const { data: ticker } = useGetMarketTicker(safeSymbol, { query: { queryKey: getGetMarketTickerQueryKey(safeSymbol), refetchInterval: 5000 } });
-  const { data: candles } = useGetMarketCandles(safeSymbol, interval, { query: { queryKey: getGetMarketCandlesQueryKey(safeSymbol, interval), refetchInterval: 30000 } });
+  const { data: candles, isError: candlesError, refetch: refetchCandles } = useGetMarketCandles(safeSymbol, interval, { query: { queryKey: getGetMarketCandlesQueryKey(safeSymbol, interval), refetchInterval: 30000, retry: 1 } });
   const { data: signals } = useGetMarketSignals(safeSymbol, { query: { queryKey: getGetMarketSignalsQueryKey(safeSymbol), refetchInterval: 60000 } });
   
   const createTrade = useCreateTrade();
@@ -210,13 +210,21 @@ export default function Market() {
 
   // Chart data with wickRange for proper candlesticks
   const chartData = useMemo(() => {
-    if (!candles) return [];
-    return candles.map(c => ({
-      ...c,
-      dateStr:   new Date(c.time * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      isUp:      c.close >= c.open,
-      wickRange: [c.low, c.high] as [number, number],
-    }));
+    if (!candles?.length) return [];
+    // A window longer than a day needs the date on the axis, otherwise
+    // every tick on a multi-day chart reads as the same clock time.
+    const spansMultipleDays =
+      candles[candles.length - 1].time - candles[0].time > 24 * 60 * 60;
+    return candles.map(c => {
+      const at = new Date(c.time * 1000);
+      const clock = at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      return {
+        ...c,
+        dateStr:   spansMultipleDays ? `${at.getMonth() + 1}/${at.getDate()} ${clock}` : clock,
+        isUp:      c.close >= c.open,
+        wickRange: [c.low, c.high] as [number, number],
+      };
+    });
   }, [candles]);
 
   // Quantity quick-fill from buying power
@@ -365,6 +373,16 @@ export default function Market() {
                   </Bar>
                 </ComposedChart>
               </ResponsiveContainer>
+            ) : candlesError ? (
+              <div className="w-full h-full flex flex-col items-center justify-center gap-3 text-down text-sm">
+                <span>CHART DATA UNAVAILABLE</span>
+                <button
+                  onClick={() => refetchCandles()}
+                  className="px-3 py-1 text-xs font-bold border border-border text-foreground hover:bg-muted"
+                >
+                  RETRY
+                </button>
+              </div>
             ) : (
               <div className="w-full h-full flex items-center justify-center text-muted-foreground text-sm">
                 LOADING CHART DATA...
