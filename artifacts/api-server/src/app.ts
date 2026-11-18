@@ -58,13 +58,16 @@ app.use("/api", router);
  */
 const webRoot = path.resolve(process.cwd(), "artifacts/trading-terminal/dist/public");
 if (process.env.SERVE_WEB === "true" && fs.existsSync(path.join(webRoot, "index.html"))) {
+  // Read once at startup: res.sendFile resolves relative to the request and
+  // failed on the Windows drive path, while static served the same file fine.
+  const indexHtml = fs.readFileSync(path.join(webRoot, "index.html"), "utf8");
   app.use(express.static(webRoot));
   app.use((req, res, next) => {
     if (req.method !== "GET" || req.path.startsWith("/api") || req.path.startsWith("/ws")) {
       next();
       return;
     }
-    res.sendFile(path.join(webRoot, "index.html"));
+    res.type("html").send(indexHtml);
   });
 }
 
