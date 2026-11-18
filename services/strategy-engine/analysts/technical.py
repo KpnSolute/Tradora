@@ -143,6 +143,7 @@ class TechnicalAnalyst:
                     trend_up=trend_up,
                     rsi_value=rsi_value,
                     momentum=momentum,
+                    timeframe=request.timeframe,
                 ),
             )
 
@@ -210,9 +211,11 @@ class TechnicalAnalyst:
                 crossover=crossover,
                 quantity=quantity,
                 risk_pct=risk_pct,
+                timeframe=request.timeframe,
             ),
             strategy_name=self.name,
             strategy_version=self.version,
+            timeframe=request.timeframe,
             mode=request.mode,
             indicators=indicators_snapshot,
         )
@@ -240,6 +243,7 @@ class TechnicalAnalyst:
         crossover: bool,
         quantity: float,
         risk_pct: float,
+        timeframe: str,
     ) -> str:
         direction = "above" if side is IntentSide.BUY else "below"
         separation_pct = abs(price / slow_ema - 1.0) * 100.0
@@ -264,12 +268,13 @@ class TechnicalAnalyst:
         )
 
         return (
-            f"{symbol} {'long' if side is IntentSide.BUY else 'short'} idea from the "
-            f"{self.name} analyst. Last close is {_money(price)}, {separation_pct:.2f}% "
+            f"{symbol} {'long' if side is IntentSide.BUY else 'short'} idea on the "
+            f"{timeframe} chart from the {self.name} analyst. Last close is "
+            f"{_money(price)}, {separation_pct:.2f}% "
             f"{direction} the {self.slow_period}-period EMA at {_money(slow_ema)}, with "
             f"the {self.fast_period}-period EMA at {_money(fast_ema)}. "
             f"RSI({self.rsi_period}) sits at {rsi_value:.1f}: {rsi_state}. "
-            f"Momentum over the last {self.momentum_lookback} bars is "
+            f"Momentum over the last {self.momentum_lookback} {timeframe} bars is "
             f"{momentum:+.2f}%.{crossover_text} "
             f"Sizing is {_quantity(quantity)} {symbol.split('-')[0]} "
             f"(a {risk_pct:.2f}% allocation). "
@@ -282,7 +287,13 @@ class TechnicalAnalyst:
         )
 
     def _stand_aside_note(
-        self, *, symbol: str, trend_up: bool, rsi_value: float, momentum: float
+        self,
+        *,
+        symbol: str,
+        trend_up: bool,
+        rsi_value: float,
+        momentum: float,
+        timeframe: str,
     ) -> str:
         low_buy, high_buy = self.buy_rsi_range
         low_sell, high_sell = self.sell_rsi_range
@@ -295,7 +306,7 @@ class TechnicalAnalyst:
             )
         elif trend_up:
             reason = (
-                f"trend is up but {self.momentum_lookback}-bar momentum is only "
+                f"trend is up but {self.momentum_lookback}-bar {timeframe} momentum is only "
                 f"{momentum:+.2f}%, below the {self.momentum_threshold_pct:.2f}% "
                 "threshold the analyst requires to act."
             )
@@ -306,7 +317,7 @@ class TechnicalAnalyst:
             )
         else:
             reason = (
-                f"trend is down and {self.momentum_lookback}-bar momentum is only "
+                f"trend is down and {self.momentum_lookback}-bar {timeframe} momentum is only "
                 f"{momentum:+.2f}%, so there is no edge worth proposing."
             )
 

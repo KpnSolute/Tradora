@@ -383,6 +383,19 @@ export const TradeIntentOrderType = {
   market: 'market',
 } as const;
 
+/**
+ * Bar interval the thesis was computed from
+ */
+export type TradeIntentTimeframe = typeof TradeIntentTimeframe[keyof typeof TradeIntentTimeframe];
+
+
+export const TradeIntentTimeframe = {
+  '15m': '15m',
+  '1h': '1h',
+  '4h': '4h',
+  '1d': '1d',
+} as const;
+
 export type TradeIntentStatus = typeof TradeIntentStatus[keyof typeof TradeIntentStatus];
 
 
@@ -412,6 +425,8 @@ export interface TradeIntent {
   confidence: number;
   thesis: string;
   strategyName: string;
+  /** Bar interval the thesis was computed from */
+  timeframe: TradeIntentTimeframe;
   status: TradeIntentStatus;
   mode: TradeIntentMode;
   /** @nullable */
@@ -425,9 +440,24 @@ export interface TradeIntent {
   createdAt: string;
 }
 
+/**
+ * Bar interval to analyse; defaults to 1h
+ */
+export type TradeIntentRequestTimeframe = typeof TradeIntentRequestTimeframe[keyof typeof TradeIntentRequestTimeframe];
+
+
+export const TradeIntentRequestTimeframe = {
+  '15m': '15m',
+  '1h': '1h',
+  '4h': '4h',
+  '1d': '1d',
+} as const;
+
 export interface TradeIntentRequest {
   /** One of the symbols served by the markets endpoint */
   symbol: string;
+  /** Bar interval to analyse; defaults to 1h */
+  timeframe?: TradeIntentRequestTimeframe;
 }
 
 export interface TradeIntentGeneration {

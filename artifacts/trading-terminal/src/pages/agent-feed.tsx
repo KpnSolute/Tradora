@@ -26,6 +26,9 @@ import * as Dialog from '@radix-ui/react-dialog';
 import { cn, formatCompactPrice } from '@/lib/utils';
 import { toast } from '@/hooks/use-toast';
 
+const TIMEFRAMES = ['15m', '1h', '4h', '1d'] as const;
+type Timeframe = (typeof TIMEFRAMES)[number];
+
 const STATUS_STYLES: Record<string, { label: string; className: string; Icon: React.ElementType }> = {
   pending:  { label: 'AWAITING DECISION', className: 'text-yellow-400 border-yellow-400/40 bg-yellow-400/10', Icon: Clock },
   approved: { label: 'APPROVED · PAPER',  className: 'text-up border-up/40 bg-up/10',                Icon: CheckCircle },
@@ -44,6 +47,7 @@ export default function AgentFeed() {
 
   const [selectedSymbol, setSelectedSymbol] = useState('');
   const [lastNote, setLastNote] = useState<string | null>(null);
+  const [timeframe, setTimeframe] = useState<Timeframe>('1h');
   const [rejectTarget, setRejectTarget] = useState<{ id: number; symbol: string; side: string } | null>(null);
   const [reason, setReason] = useState('');
 
@@ -57,7 +61,7 @@ export default function AgentFeed() {
   const handleGenerate = () => {
     if (!symbol) return;
     generate.mutate(
-      { data: { symbol } },
+      { data: { symbol, timeframe } },
       {
         onSuccess: (result) => {
           setLastNote(result.note);
@@ -180,6 +184,18 @@ export default function AgentFeed() {
             ))}
           </select>
         </div>
+        <div className="md:w-32">
+          <label className="block text-[10px] text-muted-foreground mb-1">TIMEFRAME</label>
+          <select
+            value={timeframe}
+            onChange={(e) => setTimeframe(e.target.value as Timeframe)}
+            className="w-full bg-input border border-border text-foreground px-3 py-2 text-xs focus:outline-none focus:border-primary appearance-none"
+          >
+            {TIMEFRAMES.map(tf => (
+              <option key={tf} value={tf}>{tf}</option>
+            ))}
+          </select>
+        </div>
         <button
           onClick={handleGenerate}
           disabled={generate.isPending || !symbol}
@@ -226,7 +242,7 @@ export default function AgentFeed() {
                 </span>
                 <span className="text-sm font-bold tracking-wide">{intent.symbol}</span>
                 <span className="text-[10px] text-muted-foreground">
-                  {intent.strategyName} · #{intent.id}
+                  {intent.strategyName} · {intent.timeframe} · #{intent.id}
                 </span>
               </div>
               <div className="flex items-center gap-2">
@@ -321,6 +337,7 @@ export default function AgentFeed() {
                   </span>
                   <span className="font-bold">{intent.quantity} {intent.symbol}</span>
                   <span className="text-muted-foreground">@ {formatCompactPrice(intent.referencePrice)}</span>
+                  <span className="text-[10px] text-muted-foreground">{intent.timeframe}</span>
                 </div>
                 <span className="text-[10px] text-muted-foreground">
                   {intent.decidedAt ? new Date(intent.decidedAt).toLocaleString() : new Date(intent.createdAt).toLocaleString()}

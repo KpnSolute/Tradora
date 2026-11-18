@@ -63,6 +63,49 @@ def test_uptrend_emits_buy_with_written_thesis() -> None:
     assert "BTC" in intent.thesis
 
 
+def test_timeframe_defaults_to_one_hour() -> None:
+    outcome = TechnicalAnalyst().analyse(
+        AnalystRequest(symbol="BTC-USDT", bars=make_bars(UPTREND), mode="paper")
+    )
+
+    assert outcome.intent is not None
+    assert outcome.intent.timeframe == "1h"
+    assert "1h chart" in outcome.intent.thesis
+
+
+def test_requested_timeframe_is_echoed_and_named_in_the_thesis() -> None:
+    outcome = TechnicalAnalyst().analyse(
+        AnalystRequest(
+            symbol="BTC-USDT", bars=make_bars(UPTREND), mode="paper", timeframe="4h"
+        )
+    )
+
+    assert outcome.intent is not None
+    assert outcome.intent.timeframe == "4h"
+    assert "4h chart" in outcome.intent.thesis
+    assert "12 4h bars" in outcome.intent.thesis
+
+
+def test_unknown_timeframe_is_rejected_by_the_endpoint(monkeypatch) -> None:
+    test_settings = Settings(api_access_token="test-token")
+    monkeypatch.setattr(auth, "settings", test_settings)
+    monkeypatch.setattr(api_main, "settings", test_settings)
+    monkeypatch.setattr(api_main, "is_kill_switch_active", lambda: False)
+
+    response = TestClient(app).post(
+        "/api/v1/analyst/intents",
+        json={
+            "symbol": "BTC-USDT",
+            "mode": "paper",
+            "timeframe": "3h",
+            "bars": [bar.model_dump(mode="json") for bar in make_bars(UPTREND)],
+        },
+        headers={"Authorization": "Bearer test-token"},
+    )
+
+    assert response.status_code == 422
+
+
 def test_downtrend_emits_sell_with_inverted_risk_levels() -> None:
     outcome = TechnicalAnalyst().analyse(
         AnalystRequest(symbol="BTC-USDT", bars=make_bars(DOWNTREND), mode="paper")

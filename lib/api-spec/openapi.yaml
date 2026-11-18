@@ -1427,7 +1427,7 @@ components:
 
     TradeIntent:
       type: object
-      required: [id, userId, symbol, side, quantity, orderType, referencePrice, stopLoss, takeProfit, confidence, thesis, strategyName, status, mode, createdAt]
+      required: [id, userId, symbol, side, quantity, orderType, referencePrice, stopLoss, takeProfit, confidence, thesis, strategyName, timeframe, status, mode, createdAt]
       properties:
         id:
           type: integer
@@ -1455,6 +1455,10 @@ components:
           type: string
         strategyName:
           type: string
+        timeframe:
+          type: string
+          description: Bar interval the thesis was computed from
+          enum: [15m, 1h, 4h, 1d]
         status:
           type: string
           enum: [pending, approved, rejected]
@@ -1482,6 +1486,11 @@ components:
         symbol:
           type: string
           description: One of the symbols served by the markets endpoint
+        timeframe:
+          type: string
+          description: Bar interval to analyse; defaults to 1h
+          default: 1h
+          enum: [15m, 1h, 4h, 1d]
 
     TradeIntentGeneration:
       type: object

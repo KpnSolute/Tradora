@@ -674,6 +674,7 @@ export const ListTradeIntentsResponseItem = zod.object({
   "confidence": zod.number(),
   "thesis": zod.string(),
   "strategyName": zod.string(),
+  "timeframe": zod.enum(['15m', '1h', '4h', '1d']).describe('Bar interval the thesis was computed from'),
   "status": zod.enum(['pending', 'approved', 'rejected']),
   "mode": zod.enum(['paper']),
   "decisionNote": zod.string().nullish(),
@@ -688,8 +689,11 @@ export const ListTradeIntentsResponse = zod.array(ListTradeIntentsResponseItem)
 /**
  * @summary Ask the analyst for a paper trade intent
  */
+export const generateTradeIntentBodyTimeframeDefault = `1h`;
+
 export const GenerateTradeIntentBody = zod.object({
-  "symbol": zod.string().describe('One of the symbols served by the markets endpoint')
+  "symbol": zod.string().describe('One of the symbols served by the markets endpoint'),
+  "timeframe": zod.enum(['15m', '1h', '4h', '1d']).default(generateTradeIntentBodyTimeframeDefault).describe('Bar interval to analyse; defaults to 1h')
 })
 
 export const GenerateTradeIntentResponse = zod.object({
@@ -706,6 +710,7 @@ export const GenerateTradeIntentResponse = zod.object({
   "confidence": zod.number(),
   "thesis": zod.string(),
   "strategyName": zod.string(),
+  "timeframe": zod.enum(['15m', '1h', '4h', '1d']).describe('Bar interval the thesis was computed from'),
   "status": zod.enum(['pending', 'approved', 'rejected']),
   "mode": zod.enum(['paper']),
   "decisionNote": zod.string().nullish(),
@@ -738,6 +743,7 @@ export const ApproveTradeIntentResponse = zod.object({
   "confidence": zod.number(),
   "thesis": zod.string(),
   "strategyName": zod.string(),
+  "timeframe": zod.enum(['15m', '1h', '4h', '1d']).describe('Bar interval the thesis was computed from'),
   "status": zod.enum(['pending', 'approved', 'rejected']),
   "mode": zod.enum(['paper']),
   "decisionNote": zod.string().nullish(),
@@ -776,6 +782,7 @@ export const RejectTradeIntentResponse = zod.object({
   "confidence": zod.number(),
   "thesis": zod.string(),
   "strategyName": zod.string(),
+  "timeframe": zod.enum(['15m', '1h', '4h', '1d']).describe('Bar interval the thesis was computed from'),
   "status": zod.enum(['pending', 'approved', 'rejected']),
   "mode": zod.enum(['paper']),
   "decisionNote": zod.string().nullish(),

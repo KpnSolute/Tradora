@@ -124,11 +124,14 @@ export interface AnalystResponse {
  * Ask the analyst for a proposal. `mode` is pinned to "paper": the engine has no
  * order-submission endpoint, and V1 only permits analysis, dry_run and paper.
  */
+export type AnalystTimeframe = "15m" | "1h" | "4h" | "1d";
+
 export function generateTradeIntent(payload: {
   symbol: string;
   asset_class: "stocks" | "crypto";
   bars: AnalystBar[];
   mode: "paper";
+  timeframe: AnalystTimeframe;
   equity: number;
 }): Promise<AnalystResponse> {
   return requestStrategyEngine<AnalystResponse>("/api/v1/analyst/intents", {

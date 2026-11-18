@@ -9,6 +9,7 @@ import type { TradeIntentMode } from './tradeIntentMode';
 import type { TradeIntentOrderType } from './tradeIntentOrderType';
 import type { TradeIntentSide } from './tradeIntentSide';
 import type { TradeIntentStatus } from './tradeIntentStatus';
+import type { TradeIntentTimeframe } from './tradeIntentTimeframe';
 
 export interface TradeIntent {
   id: number;
@@ -23,6 +24,8 @@ export interface TradeIntent {
   confidence: number;
   thesis: string;
   strategyName: string;
+  /** Bar interval the thesis was computed from */
+  timeframe: TradeIntentTimeframe;
   status: TradeIntentStatus;
   mode: TradeIntentMode;
   /** @nullable */

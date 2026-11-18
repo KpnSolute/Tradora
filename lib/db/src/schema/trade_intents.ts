@@ -22,6 +22,7 @@ export const tradeIntentsTable = pgTable("trade_intents", {
   confidence: numeric("confidence", { precision: 5, scale: 4 }).notNull(),
   thesis: text("thesis").notNull(),
   strategyName: text("strategy_name").notNull(),
+  timeframe: text("timeframe").notNull().default("1h"), // bar interval the thesis used
   status: text("status").notNull().default("pending"), // pending | approved | rejected
   mode: text("mode").notNull().default("paper"), // paper only
   decisionNote: text("decision_note"),

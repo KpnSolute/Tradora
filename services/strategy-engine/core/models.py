@@ -74,6 +74,7 @@ class AnalystRequest(BaseModel):
     mode: str = "analysis"
     equity: float = Field(default=10_000.0, gt=0)
     risk_pct_of_equity: float | None = Field(default=None, gt=0, le=100)
+    timeframe: str = Field(default="1h", pattern=r"^(15m|1h|4h|1d)$")
 
 
 class TradeIntent(BaseModel):
@@ -92,6 +93,7 @@ class TradeIntent(BaseModel):
     thesis: str = Field(min_length=20)
     strategy_name: str
     strategy_version: str
+    timeframe: str = "1h"
     mode: str
     generated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     indicators: dict[str, float] = Field(default_factory=dict)

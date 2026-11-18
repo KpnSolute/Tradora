@@ -28,6 +28,15 @@ const PAPER_STARTING_BALANCE = 10_000;
 const INTENT_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_THESIS_IN_NOTES = 220;
 
+/**
+ * Bar intervals the analyst may run on. Short intraday windows give the 21-period
+ * EMA and ATR too little history inside Kraken's 120-candle response to mean
+ * anything, so the feed stops at 15m.
+ */
+const ANALYST_TIMEFRAMES = ["15m", "1h", "4h", "1d"] as const;
+type AnalystTimeframe = (typeof ANALYST_TIMEFRAMES)[number];
+const DEFAULT_TIMEFRAME: AnalystTimeframe = "1h";
+
 class AgentFeedError extends Error {
   constructor(
     message: string,
@@ -73,6 +82,7 @@ function serializeIntent(intent: any) {
     confidence: parseFloat(intent.confidence),
     thesis: intent.thesis,
     strategyName: intent.strategyName,
+    timeframe: intent.timeframe,
     status: intent.status,
     mode: intent.mode,
     decisionNote: intent.decisionNote ?? null,
@@ -147,12 +157,30 @@ router.post("/agent-feed/generate", async (req, res): Promise<void> => {
     return;
   }
 
+  const rawTimeframe = req.body?.timeframe;
+  const timeframe = (
+    typeof rawTimeframe === "string" && rawTimeframe.trim() !== ""
+      ? rawTimeframe.trim()
+      : DEFAULT_TIMEFRAME
+  ) as AnalystTimeframe;
+  if (!ANALYST_TIMEFRAMES.includes(timeframe)) {
+    res.status(400).json({
+      error: `timeframe must be one of: ${ANALYST_TIMEFRAMES.join(", ")}`,
+    });
+    return;
+  }
+
   let candles: Awaited<ReturnType<typeof fetchCandles>>;
   try {
-    candles = await fetchCandles(symbol, "1h", 120);
+    candles = await fetchCandles(symbol, timeframe, 120);
   } catch (error) {
-    logger.warn({ err: error, symbol }, "Agent Feed market data fetch failed");
-    res.status(502).json({ error: `Market data unavailable for ${symbol}` });
+    logger.warn(
+      { err: error, symbol, timeframe },
+      "Agent Feed market data fetch failed",
+    );
+    res
+      .status(502)
+      .json({ error: `Market data unavailable for ${symbol} (${timeframe})` });
     return;
   }
 
@@ -168,6 +196,7 @@ router.post("/agent-feed/generate", async (req, res): Promise<void> => {
       symbol,
       asset_class: "crypto",
       mode: "paper",
+      timeframe,
       equity,
       bars: candles.map((candle) => ({
         symbol,
@@ -205,6 +234,7 @@ router.post("/agent-feed/generate", async (req, res): Promise<void> => {
       confidence: String(proposal.confidence),
       thesis: proposal.thesis,
       strategyName: proposal.strategy_name,
+      timeframe,
       status: "pending",
       mode: "paper",
       expiresAt: new Date(Date.now() + INTENT_TTL_MS),
@@ -212,7 +242,7 @@ router.post("/agent-feed/generate", async (req, res): Promise<void> => {
     .returning();
 
   logger.info(
-    { intentId: row.id, symbol: row.symbol, side: row.side },
+    { intentId: row.id, symbol: row.symbol, side: row.side, timeframe },
     "Agent Feed intent created",
   );
 

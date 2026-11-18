@@ -5,8 +5,11 @@
  * Trading Terminal API
  * OpenAPI spec version: 0.1.0
  */
+import type { TradeIntentRequestTimeframe } from './tradeIntentRequestTimeframe';
 
 export interface TradeIntentRequest {
   /** One of the symbols served by the markets endpoint */
   symbol: string;
+  /** Bar interval to analyse; defaults to 1h */
+  timeframe?: TradeIntentRequestTimeframe;
 }
