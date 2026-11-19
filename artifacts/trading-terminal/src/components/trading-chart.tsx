@@ -38,19 +38,41 @@ interface TradingChartProps {
   onRetry?: () => void;
 }
 
+/** HSL triplet (`0 0% 60%`, the Tailwind token format) → 8-bit RGB. */
+function hslTripletToRgb(raw: string): [number, number, number] | null {
+  const parts = raw.replace(/\s*\/\s*[\d.]+%?$/, '').split(/\s+/).filter(Boolean);
+  if (parts.length < 3) return null;
+  const h = parseFloat(parts[0]);
+  const s = parseFloat(parts[1]) / 100;
+  const l = parseFloat(parts[2]) / 100;
+  if (![h, s, l].every(Number.isFinite)) return null;
+
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const hp = ((((h % 360) + 360) % 360) / 60);
+  const x = c * (1 - Math.abs((hp % 2) - 1));
+  const m = l - c / 2;
+  const base: [number, number, number] =
+    hp < 1 ? [c, x, 0] :
+    hp < 2 ? [x, c, 0] :
+    hp < 3 ? [0, c, x] :
+    hp < 4 ? [0, x, c] :
+    hp < 5 ? [x, 0, c] : [c, 0, x];
+  return base.map(v => Math.round((v + m) * 255)) as [number, number, number];
+}
+
 /**
- * Resolve a Tailwind theme token (stored as an HSL triplet such as `0 0% 60%`) to a
- * canvas colour. Lightweight Charts' parser only understands the legacy comma form
- * and throws "Cannot parse color" on `hsl(0 0% 60%)`, so rebuild it with commas.
+ * Resolve a Tailwind theme token to a colour the canvas renderer accepts.
+ * Lightweight Charts parses colours itself and only understands hex / rgb() /
+ * rgba() — it throws "Cannot parse color" for hsl(), so convert first.
  */
 function themeColor(token: string, alpha = 1): string {
-  if (typeof window === 'undefined') return '#888';
+  if (typeof window === 'undefined') return '#888888';
   const raw = getComputedStyle(document.documentElement).getPropertyValue(token).trim();
-  if (!raw) return '#888';
-  const parts = raw.replace(/\s*\/\s*[\d.]+%?$/, '').split(/\s+/).filter(Boolean);
-  if (parts.length < 3) return '#888';
-  const [h, s, l] = parts;
-  return alpha === 1 ? `hsl(${h}, ${s}, ${l})` : `hsla(${h}, ${s}, ${l}, ${alpha})`;
+  const rgb = raw ? hslTripletToRgb(raw) : null;
+  if (!rgb) return '#888888';
+  const [r, g, b] = rgb;
+  if (alpha !== 1) return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  return `#${[r, g, b].map(v => v.toString(16).padStart(2, '0')).join('')}`;
 }
 
 interface Legend {
