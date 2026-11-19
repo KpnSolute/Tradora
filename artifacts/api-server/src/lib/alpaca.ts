@@ -62,6 +62,16 @@ export interface AlpacaOrder {
   extended_hours: boolean;
 }
 
+export interface AlpacaPortfolioHistory {
+  timestamp: number[];
+  equity: (number | null)[];
+  profit_loss: (number | null)[];
+  profit_loss_pct: (number | null)[];
+  base_value: number;
+  base_value_asof?: string;
+  timeframe: string;
+}
+
 export interface AlpacaOrderInput {
   symbol: string;         // e.g. "BTC/USD"
   qty?: string;           // quantity in asset units
@@ -118,6 +128,12 @@ export class AlpacaClient {
 
   async getOrders(limit = 50): Promise<AlpacaOrder[]> {
     return this.request<AlpacaOrder[]>(`/v2/orders?status=all&limit=${limit}&direction=desc`);
+  }
+
+  /** Equity timeseries for the account's equity curve (1D…1Y). */
+  async getPortfolioHistory(period = "1D", timeframe = "5Min"): Promise<AlpacaPortfolioHistory> {
+    const qs = new URLSearchParams({ period, timeframe }).toString();
+    return this.request<AlpacaPortfolioHistory>(`/v2/account/portfolio/history?${qs}`);
   }
 
   async placeOrder(order: AlpacaOrderInput): Promise<AlpacaOrder> {

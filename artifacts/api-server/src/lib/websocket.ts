@@ -71,8 +71,6 @@ async function fireAutomation(rule: any, currentPrice: number): Promise<void> {
     .where(eq(automationsTable.id, rule.id));
 
   try {
-    assertOrderPlacementQuarantined("WebSocket automation execution");
-
     const qty = parseFloat(rule.quantity);
     const limitPrice = rule.limitPrice ? parseFloat(rule.limitPrice) : undefined;
 
@@ -92,7 +90,11 @@ async function fireAutomation(rule: any, currentPrice: number): Promise<void> {
         filledAt: new Date(),
       });
     } else {
-      // Live: find user's connected broker account and place real order
+      // Broker execution stays behind the order-placement kill switch: nothing here
+      // reaches a real broker until the canonical safety gateway exists.
+      assertOrderPlacementQuarantined("WebSocket automation execution");
+
+      // Find the user's connected broker account and place the order
       const rows = await db
         .select()
         .from(tradingAccountsTable)

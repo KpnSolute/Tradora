@@ -123,9 +123,7 @@ export default function Automations() {
     };
   }, [queryClient]);
 
-  const [orderType, setOrderType] = useState<'market' | 'limit'>('market');
-
-  const { register, handleSubmit, watch, reset, formState: { errors } } = useForm<AutomationForm>({
+  const { register, handleSubmit, watch, reset, setValue, formState: { errors } } = useForm<AutomationForm>({
     resolver: zodResolver(automationSchema),
     defaultValues: { condition: 'lte', side: 'buy', orderType: 'market', broker: 'paper' },
   });
@@ -133,11 +131,20 @@ export default function Automations() {
   const watchedSide = watch('side');
   const watchedCondition = watch('condition');
   const watchedBroker = watch('broker');
+  const orderType = watch('orderType') ?? 'market';
+
+  // Default to a broker the user has actually connected, so the rule is created
+  // against a real account instead of silently falling back to local paper fills.
+  const connectedBrokerKey = accounts?.filter(a => a.status === 'active').map(a => a.exchange).join(',');
+  useEffect(() => {
+    const first = accounts?.find(a => a.status === 'active');
+    if (first) setValue('broker', first.exchange as AutomationForm['broker']);
+  }, [connectedBrokerKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const onSubmit = (data: AutomationForm) => {
     createAuto.mutate({ data }, {
       onSuccess: () => {
-        reset({ condition: 'lte', side: 'buy', orderType: 'market', broker: 'paper' });
+        reset({ condition: 'lte', side: 'buy', orderType: 'market', broker: data.broker });
         queryClient.invalidateQueries({ queryKey: getListAutomationsQueryKey() });
       },
     });
@@ -284,6 +291,9 @@ export default function Automations() {
                   ))}
                 </select>
                 {errors.symbol && <p className="text-down text-[10px] mt-1">{errors.symbol.message}</p>}
+                <p className="text-[10px] text-muted-foreground mt-1">
+                  Triggers evaluate on the live crypto ticks this server streams; stock symbols need a price feed that isn't wired up yet.
+                </p>
               </div>
 
               {/* Condition + Trigger Price */}
@@ -351,7 +361,7 @@ export default function Automations() {
                       'flex items-center justify-center gap-1.5 py-2 cursor-pointer text-xs font-bold tracking-widest transition-colors',
                       orderType === t ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:bg-muted/50',
                     )}>
-                      <input type="radio" {...register('orderType')} value={t} className="sr-only" onChange={() => setOrderType(t)} />
+                      <input type="radio" {...register('orderType')} value={t} className="sr-only" />
                       {t.toUpperCase()}
                     </label>
                   ))}
@@ -395,7 +405,9 @@ export default function Automations() {
 
               {createAuto.error && (
                 <div className="text-down text-[10px] p-2 bg-down/10 border border-down/30">
-                  {(createAuto.error as any)?.error ?? 'Failed to create rule'}
+                  {(createAuto.error as any)?.data?.error
+                    ?? (createAuto.error as any)?.message
+                    ?? 'Failed to create rule'}
                 </div>
               )}
 
@@ -415,8 +427,8 @@ export default function Automations() {
             <div className="font-bold text-foreground text-xs mb-2">HOW IT WORKS</div>
             <div className="flex items-start gap-2"><Zap className="w-3 h-3 mt-0.5 shrink-0 text-primary" /> Rules fire the instant a live price tick crosses your trigger</div>
             <div className="flex items-start gap-2"><CheckCircle className="w-3 h-3 mt-0.5 shrink-0 text-up" /> Each rule fires once, then marks itself completed</div>
-            <div className="flex items-start gap-2"><Activity className="w-3 h-3 mt-0.5 shrink-0 text-primary" /> Paper rules use local simulated fills, no real funds</div>
-            <div className="flex items-start gap-2"><AlertTriangle className="w-3 h-3 mt-0.5 shrink-0 text-yellow-400" /> Live broker rules place real orders — use with care</div>
+            <div className="flex items-start gap-2"><Activity className="w-3 h-3 mt-0.5 shrink-0 text-primary" /> Paper rules fill locally in the trade log, no broker contacted</div>
+            <div className="flex items-start gap-2"><AlertTriangle className="w-3 h-3 mt-0.5 shrink-0 text-yellow-400" /> Broker rules are parked by the order-placement kill switch and show up as FAILED until the safety gateway ships</div>
           </div>
         </div>
       </div>

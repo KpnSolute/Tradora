@@ -2,6 +2,7 @@
  * Alpaca integration routes — all require an authenticated user with an active Alpaca account.
  *
  * GET  /alpaca/account    → real Alpaca account info (equity, buying power, cash)
+ * GET  /alpaca/portfolio-history → real equity curve (1D…1Y)
  * GET  /alpaca/positions  → real open positions
  * GET  /alpaca/orders     → order history (last 50)
  * POST /alpaca/orders     → place a market/limit order
@@ -74,6 +75,55 @@ router.get("/alpaca/account", async (req, res): Promise<void> => {
     });
   } catch (err: any) {
     logger.warn({ err }, "Alpaca getAccount error");
+    res.status(502).json({ error: `Alpaca error: ${err?.message}` });
+  }
+});
+
+// GET /alpaca/portfolio-history — real equity curve from Alpaca
+const HISTORY_TIMEFRAMES: Record<string, string> = {
+  "1D": "5Min",
+  "1W": "15Min",
+  "1M": "1D",
+  "3M": "1D",
+  "1A": "1D",
+  "1Y": "1D",
+  all: "1D",
+};
+
+router.get("/alpaca/portfolio-history", async (req, res): Promise<void> => {
+  if (!requireAuth(req, res)) return;
+  const client = await getAlpacaClient(req.session.userId!, res);
+  if (!client) return;
+
+  const rawPeriod = String(req.query.period ?? "1D").toUpperCase();
+  const period = rawPeriod === "ALL" ? "all" : rawPeriod;
+  if (!(period in HISTORY_TIMEFRAMES)) {
+    res.status(400).json({ error: `period must be one of: ${Object.keys(HISTORY_TIMEFRAMES).join(", ")}` });
+    return;
+  }
+
+  const requested = typeof req.query.timeframe === "string" ? req.query.timeframe : "";
+  const timeframe = requested || HISTORY_TIMEFRAMES[period];
+
+  try {
+    const history = await client.getPortfolioHistory(period, timeframe);
+    const points = history.timestamp
+      .map((ts, i) => ({ t: new Date(ts * 1000).toISOString(), equity: history.equity[i] }))
+      .filter((p): p is { t: string; equity: number } => typeof p.equity === "number");
+
+    const last = points.length > 0 ? points[points.length - 1].equity : history.base_value;
+    const change = last - history.base_value;
+
+    res.json({
+      period,
+      timeframe: history.timeframe ?? timeframe,
+      baseValue: history.base_value,
+      change: +change.toFixed(2),
+      changePct: history.base_value > 0 ? +((change / history.base_value) * 100).toFixed(2) : 0,
+      points,
+    });
+  } catch (err: any) {
+    logger.warn({ err }, "Alpaca getPortfolioHistory error");
     res.status(502).json({ error: `Alpaca error: ${err?.message}` });
   }
 });
