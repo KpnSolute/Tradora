@@ -12,6 +12,10 @@ routes = [{ pattern = "tradora.kpnsolute.com/*", zone_name = "kpnsolute.com" }]
 
 [vars]
 ORIGIN_URL = "https://tradora.onrender.com"
+# Everything under /engine is rewritten onto this service. The path itself is
+guarded by a Cloudflare Access application; the service token stays in Render's
+# environment, never in this file.
+ENGINE_URL = "https://tradora-engine.onrender.com"
 
 [observability]
 enabled = true

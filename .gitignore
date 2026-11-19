@@ -51,3 +51,5 @@ Thumbs.db
 # Local deploy credentials never get committed
 .cf-token
 .dev.vars*
+/.cf-access.env
+/.cloud-attachments/

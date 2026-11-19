@@ -75,20 +75,37 @@ Cloudflare is the public edge, not the authorisation layer:
 from the internet. It authenticates with a bearer token and is called only by the
 Express API (`STRATEGY_ENGINE_BASE_URL` + `STRATEGY_ENGINE_API_ACCESS_TOKEN`).
 
-To close it at the edge with Cloudflare Zero Trust (free plan):
+The engine gets no hostname of its own. The Worker strips the `/engine` prefix and
+forwards to the engine, and a Cloudflare Zero Trust self-hosted application guards
+that path, so the only intended entrance is:
 
-1. Add a proxied DNS record for `engine.kpnsolute.com` pointing at the Render
-   engine hostname.
-2. Zero Trust → Access → Applications → *Self-hosted*: protect
-   `engine.kpnsolute.com` with a policy of type **Service Auth**, and create a
-   **service token**. No other policy: humans have no reason to reach it.
-3. Put the token on the Render **API** service as `CF_ACCESS_CLIENT_ID` and
-   `CF_ACCESS_CLIENT_SECRET`; the API sends `CF-Access-Client-Id` /
-   `CF-Access-Client-Secret` on every engine call.
-4. Set the API's `STRATEGY_ENGINE_BASE_URL=https://engine.kpnsolute.com` and confirm
-   the Agent Feed still generates intents.
-5. Only then disable the Render engine's public `onrender.com` subdomain, and keep
+    https://tradora.kpnsolute.com/engine  ->  https://tradora-engine.onrender.com
+
+Setup (applied in production):
+
+1. Zero Trust → Access → Applications → *Self-hosted* on `tradora.kpnsolute.com`
+   with path `engine`, policy type **Service Auth**. No other policy: humans have
+   no reason to reach the engine.
+2. Create a **service token** and put it on the Render **API** service as
+   `CF_ACCESS_CLIENT_ID` and `CF_ACCESS_CLIENT_SECRET`. The API sends
+   `CF-Access-Client-Id` / `CF-Access-Client-Secret` on every engine call.
+3. Set the API's `STRATEGY_ENGINE_BASE_URL=https://tradora.kpnsolute.com/engine` and
+   confirm the Agent Feed still generates intents.
+4. Only then disable the Render engine's public `onrender.com` subdomain, keeping
    the bearer token as the second layer.
 
-Direct requests to the Render engine URL stay possible until step 5; the Worker in
-front of the app does not cover a separate service.
+Check both layers from a shell:
+
+    curl -s -o /dev/null -w '%{http_code}\n' https://tradora.kpnsolute.com/engine/healthz  # 401: Access
+    curl -s -o /dev/null -w '%{http_code}\n' https://tradora.kpnsolute.com/api/healthz     # 200: path-scoped
+
+Add `-H` with the token's client id/secret headers to the first call to get
+`200 {"status":"ok"}`. The Worker drops `set-cookie` on `/engine/*`, so the
+`CF_Authorization` JWT Cloudflare mints for a service-token request never reaches
+a browser.
+
+Step 4 is the one gap that remains: `tradora-engine.onrender.com` still answers
+directly. Do not disable it while `ENGINE_URL` points at that hostname — it is the
+Worker's only path to the engine. Closing it needs the engine behind its own
+verified Render custom domain (and the service token held by the Worker instead of
+the API).
