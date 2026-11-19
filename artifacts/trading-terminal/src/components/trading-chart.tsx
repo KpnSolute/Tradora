@@ -38,12 +38,19 @@ interface TradingChartProps {
   onRetry?: () => void;
 }
 
-/** Resolve a Tailwind theme token (stored as an HSL triplet) to a canvas colour. */
+/**
+ * Resolve a Tailwind theme token (stored as an HSL triplet such as `0 0% 60%`) to a
+ * canvas colour. Lightweight Charts' parser only understands the legacy comma form
+ * and throws "Cannot parse color" on `hsl(0 0% 60%)`, so rebuild it with commas.
+ */
 function themeColor(token: string, alpha = 1): string {
   if (typeof window === 'undefined') return '#888';
   const raw = getComputedStyle(document.documentElement).getPropertyValue(token).trim();
   if (!raw) return '#888';
-  return alpha === 1 ? `hsl(${raw})` : `hsl(${raw} / ${alpha})`;
+  const parts = raw.replace(/\s*\/\s*[\d.]+%?$/, '').split(/\s+/).filter(Boolean);
+  if (parts.length < 3) return '#888';
+  const [h, s, l] = parts;
+  return alpha === 1 ? `hsl(${h}, ${s}, ${l})` : `hsla(${h}, ${s}, ${l}, ${alpha})`;
 }
 
 interface Legend {
