@@ -9,6 +9,7 @@ import { Router, type IRouter } from "express";
 import { db, automationsTable } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
 import { logger } from "../lib/logger";
+import { validateRuleInput, type AutomationRuleInput } from "../lib/automation-rules";
 
 const router: IRouter = Router();
 
@@ -20,66 +21,7 @@ function requireAuth(req: any, res: any): boolean {
   return true;
 }
 
-const VALID_CONDITIONS = ["gte", "lte"] as const;
-const VALID_SIDES      = ["buy", "sell"] as const;
-const VALID_ORDER_TYPES = ["market", "limit"] as const;
-const VALID_BROKERS    = ["paper", "alpaca", "coinbase", "binance", "kraken", "bybit"] as const;
 
-type CreateBody = {
-  symbol:       string;
-  condition:    "gte" | "lte";
-  triggerPrice: number;
-  side:         "buy" | "sell";
-  quantity:     number;
-  orderType:    "market" | "limit";
-  limitPrice?:  number;
-  broker:       "paper" | "alpaca" | "coinbase" | "binance" | "kraken" | "bybit";
-};
-
-function validateCreateBody(body: any): CreateBody | { error: string } {
-  if (!body.symbol || typeof body.symbol !== "string" || body.symbol.trim() === "") {
-    return { error: "symbol is required" };
-  }
-  if (!VALID_CONDITIONS.includes(body.condition)) {
-    return { error: `condition must be one of: ${VALID_CONDITIONS.join(", ")}` };
-  }
-  if (!VALID_SIDES.includes(body.side)) {
-    return { error: `side must be one of: ${VALID_SIDES.join(", ")}` };
-  }
-
-  const triggerPrice = parseFloat(body.triggerPrice);
-  if (!isFinite(triggerPrice) || triggerPrice <= 0) {
-    return { error: "triggerPrice must be a positive number" };
-  }
-  const quantity = parseFloat(body.quantity);
-  if (!isFinite(quantity) || quantity <= 0) {
-    return { error: "quantity must be a positive number" };
-  }
-
-  const orderType: "market" | "limit" = VALID_ORDER_TYPES.includes(body.orderType)
-    ? body.orderType as "market" | "limit"
-    : "market";
-
-  if (orderType === "limit") {
-    const lp = parseFloat(body.limitPrice);
-    if (!isFinite(lp) || lp <= 0) {
-      return { error: "limitPrice is required and must be positive when orderType is 'limit'" };
-    }
-  }
-
-  const broker = VALID_BROKERS.includes(body.broker) ? body.broker as CreateBody["broker"] : "paper";
-
-  return {
-    symbol:       body.symbol.trim().toUpperCase(),
-    condition:    body.condition as "gte" | "lte",
-    triggerPrice,
-    side:         body.side as "buy" | "sell",
-    quantity,
-    orderType,
-    limitPrice:   orderType === "limit" ? parseFloat(body.limitPrice) : undefined,
-    broker,
-  };
-}
 
 function serializeAutomation(a: any) {
   return {
@@ -113,12 +55,12 @@ router.get("/automations", async (req, res): Promise<void> => {
 // POST /automations
 router.post("/automations", async (req, res): Promise<void> => {
   if (!requireAuth(req, res)) return;
-  const validated = validateCreateBody(req.body);
+  const validated = validateRuleInput(req.body);
   if ("error" in validated) {
     res.status(400).json({ error: validated.error });
     return;
   }
-  const data = validated;
+  const data: AutomationRuleInput = validated;
   const [rule] = await db
     .insert(automationsTable)
     .values({
@@ -136,6 +78,59 @@ router.post("/automations", async (req, res): Promise<void> => {
     .returning();
   logger.info({ ruleId: rule.id, symbol: rule.symbol, condition: rule.condition, triggerPrice: rule.triggerPrice }, "Automation created");
   res.status(201).json(serializeAutomation(rule));
+});
+
+// PATCH /automations/:id — edit a rule that hasn't fired yet
+router.patch("/automations/:id", async (req, res): Promise<void> => {
+  if (!requireAuth(req, res)) return;
+  const userId = req.session.userId!;
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isFinite(id)) {
+    res.status(400).json({ error: "invalid rule id" });
+    return;
+  }
+
+  const [existing] = await db
+    .select()
+    .from(automationsTable)
+    .where(and(eq(automationsTable.id, id), eq(automationsTable.userId, userId)));
+
+  if (!existing) {
+    res.status(404).json({ error: "Rule not found" });
+    return;
+  }
+  if (existing.status !== "active") {
+    res.status(409).json({ error: `Only a rule that is still watching can be edited (this one is ${existing.status}).` });
+    return;
+  }
+
+  const validated = validateRuleInput(req.body);
+  if ("error" in validated) {
+    res.status(400).json({ error: validated.error });
+    return;
+  }
+  const data = validated;
+
+  const [rule] = await db
+    .update(automationsTable)
+    .set({
+      symbol:       data.symbol,
+      condition:    data.condition,
+      triggerPrice: String(data.triggerPrice),
+      side:         data.side,
+      quantity:     String(data.quantity),
+      orderType:    data.orderType,
+      limitPrice:   data.limitPrice ? String(data.limitPrice) : null,
+      broker:       data.broker,
+      status:       "active",
+      failureReason: null,
+      firedAt:      null,
+    })
+    .where(and(eq(automationsTable.id, id), eq(automationsTable.userId, userId)))
+    .returning();
+
+  logger.info({ ruleId: rule.id }, "Automation updated");
+  res.json(serializeAutomation(rule));
 });
 
 // DELETE /automations/:id
