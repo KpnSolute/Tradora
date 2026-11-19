@@ -33,22 +33,39 @@ app.use(
   }),
 );
 
-app.use(cors({
-  origin: (origin, callback) => {
-    // Allow requests with no origin (mobile native, curl, etc.)
-    if (!origin) return callback(null, true);
-    // Allow any replit.dev subdomain (covers web terminal + Expo web preview)
-    if (/\.replit\.dev$/.test(origin) || /\.repl\.co$/.test(origin)) {
-      return callback(null, true);
-    }
-    // Allow localhost for local development
-    if (/^https?:\/\/localhost(:\d+)?$/.test(origin)) {
-      return callback(null, true);
-    }
-    return callback(new Error(`CORS: origin ${origin} not allowed`), false);
-  },
-  credentials: true,
-}));
+// Same-origin is the production topology (the API serves the built SPA), and
+// browsers still send `Origin` on crossorigin module/stylesheet requests, so a
+// strict external allowlist would 500 the app's own assets and blank the page.
+const extraOrigins = new Set(
+  [process.env.APP_ORIGIN, process.env.CORS_ORIGINS]
+    .filter((value): value is string => Boolean(value))
+    .flatMap((value) => value.split(","))
+    .map((value) => value.trim().replace(/\/$/, ""))
+    .filter(Boolean),
+);
+
+app.use((req, res, next) =>
+  cors({
+    origin: (origin, callback) => {
+      // Allow requests with no origin (mobile native, curl, server-to-server)
+      if (!origin) return callback(null, true);
+      const originHost = origin.replace(/^https?:\/\//, "").replace(/\/$/, "");
+      // Same origin as this server: always fine, whatever the host
+      if (originHost === req.headers.host) return callback(null, true);
+      if (extraOrigins.has(origin.replace(/\/$/, ""))) return callback(null, true);
+      // Replit preview domains (covers web terminal + Expo web preview)
+      if (/\.replit\.dev$/.test(originHost) || /\.repl\.co$/.test(originHost)) {
+        return callback(null, true);
+      }
+      // Local development
+      if (/^(localhost|127\.0\.0\.1)(:\d+)?$/.test(originHost)) {
+        return callback(null, true);
+      }
+      return callback(new Error(`CORS: origin ${origin} not allowed`), false);
+    },
+    credentials: true,
+  })(req, res, next),
+);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(sessionMiddleware);

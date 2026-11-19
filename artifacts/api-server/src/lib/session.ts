@@ -1,10 +1,12 @@
 import session from "express-session";
+import { PgSessionStore } from "./pg-session-store";
 
 if (!process.env.SESSION_SECRET) {
   throw new Error("SESSION_SECRET must be set");
 }
 
 export const sessionMiddleware = session({
+  store: new PgSessionStore(),
   secret: process.env.SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
