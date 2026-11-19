@@ -35,6 +35,12 @@ def health_payload() -> dict[str, str]:
     return {"status": "ok", "mode": "paper_only"}
 
 
+@app.get("/healthz")
+def healthz() -> dict[str, str]:
+    """Unauthenticated liveness probe for the hosting platform's health check."""
+    return {"status": "ok"}
+
+
 @app.get("/health", dependencies=auth_dependencies)
 @app.get("/api/v1/health", dependencies=auth_dependencies)
 def health() -> dict[str, str]:
