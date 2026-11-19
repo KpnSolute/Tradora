@@ -9,6 +9,10 @@ import { sessionMiddleware } from "./lib/session";
 
 const app: Express = express();
 
+// Hosted deploys terminate TLS at the proxy. Without this, `req.secure` is false
+// behind Render's edge and the production (secure) session cookie is never set.
+app.set("trust proxy", 1);
+
 app.use(
   pinoHttp({
     logger,
