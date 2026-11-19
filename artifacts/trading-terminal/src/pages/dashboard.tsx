@@ -17,6 +17,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { Link } from 'wouter';
 import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid,
+  ReferenceLine, ReferenceDot,
 } from 'recharts';
 import {
   TrendingUp, Activity, Plus, X, Search, DollarSign, Percent,
@@ -153,6 +154,21 @@ function AlpacaAccountSection() {
                   strokeWidth={1.5}
                   fill="url(#equityFill)"
                   isAnimationActive={false}
+                />
+                {/* fomo-style "now" marker: dashed line plus the live endpoint dot */}
+                <ReferenceLine
+                  x={points[points.length - 1].t}
+                  stroke="hsl(var(--muted-foreground))"
+                  strokeDasharray="3 3"
+                  strokeOpacity={0.5}
+                />
+                <ReferenceDot
+                  x={points[points.length - 1].t}
+                  y={points[points.length - 1].equity}
+                  r={3}
+                  fill={lineColor}
+                  stroke="none"
+                  isFront
                 />
               </AreaChart>
             </ResponsiveContainer>
