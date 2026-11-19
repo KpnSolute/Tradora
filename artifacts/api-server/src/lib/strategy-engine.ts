@@ -32,6 +32,15 @@ async function requestStrategyEngine<T>(
   const headers: Record<string, string> = {
     Authorization: `Bearer ${token}`,
   };
+  // Optional Cloudflare Access service token. When the engine is protected by a
+  // Zero Trust application, Cloudflare rejects every request that does not carry
+  // these headers before it ever reaches Render.
+  const accessClientId = process.env.CF_ACCESS_CLIENT_ID;
+  const accessClientSecret = process.env.CF_ACCESS_CLIENT_SECRET;
+  if (accessClientId && accessClientSecret) {
+    headers["CF-Access-Client-Id"] = accessClientId;
+    headers["CF-Access-Client-Secret"] = accessClientSecret;
+  }
   if (init.body !== undefined) headers["Content-Type"] = "application/json";
 
   let response: Response;
