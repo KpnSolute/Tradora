@@ -26,8 +26,11 @@ async function requestStrategyEngine<T>(
     throw new StrategyEngineError("Strategy engine is not configured", 503);
   }
 
-  const baseUrl = process.env.STRATEGY_ENGINE_BASE_URL ?? DEFAULT_BASE_URL;
-  const url = new URL(path, `${baseUrl.replace(/\/$/, "")}/`);
+  // The base URL may carry a path prefix (`https://tradora.kpnsolute.com/engine`),
+  // so append the path instead of resolving it: `new URL("/health", base)` would
+  // resolve against the origin and silently drop `/engine`.
+  const baseUrl = (process.env.STRATEGY_ENGINE_BASE_URL ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
+  const url = new URL(`${baseUrl}${path.startsWith("/") ? path : `/${path}`}`);
 
   const headers: Record<string, string> = {
     Authorization: `Bearer ${token}`,
