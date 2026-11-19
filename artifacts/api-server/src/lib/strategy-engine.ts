@@ -27,7 +27,9 @@ async function requestStrategyEngine<T>(
   }
 
   const baseUrl = process.env.STRATEGY_ENGINE_BASE_URL ?? DEFAULT_BASE_URL;
-  const url = new URL(path, `${baseUrl.replace(/\/$/, "")}/`);
+  // Paths such as "/api/v1/..." must remain relative to an engine base URL
+  // that may include a reverse-proxy prefix (e.g. /engine).
+  const url = new URL(path.replace(/^\/+/, ""), `${baseUrl.replace(/\/+$/, "")}/`);
 
   const headers: Record<string, string> = {
     Authorization: `Bearer ${token}`,
