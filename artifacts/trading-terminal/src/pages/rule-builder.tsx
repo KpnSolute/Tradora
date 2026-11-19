@@ -12,34 +12,22 @@ import {
   Sparkles, Wand2, Plus, Trash2, Pencil, AlertTriangle, Zap, Loader2, Save, X,
 } from 'lucide-react';
 import { cn, formatCompactPrice } from '@/lib/utils';
-
-type Broker = 'paper' | 'alpaca' | 'coinbase' | 'binance' | 'kraken' | 'bybit';
-
-interface Draft {
-  symbol: string;
-  condition: 'gte' | 'lte';
-  triggerPrice: number;
-  side: 'buy' | 'sell';
-  quantity: number;
-  orderType: 'market' | 'limit';
-  limitPrice?: number | null;
-  broker: Broker;
-}
-
-const BROKER_LABELS: Record<string, string> = {
-  paper: 'Paper (local fills)',
-  alpaca: 'Alpaca',
-  coinbase: 'Coinbase',
-  binance: 'Binance',
-  kraken: 'Kraken',
-  bybit: 'Bybit',
-};
+import { RuleFields, BROKER_LABELS, type RuleValue } from '@/components/rule-fields';
 
 const EXAMPLES = [
   'Buy 0.001 BTC-USDT when it drops to $58,000, market order',
   'Sell 0.5 ETH-USDT if it rises to $3,200 with a limit at $3,190',
   'Buy 10 SOL-USDT when price falls below $120 on paper',
 ];
+
+interface BuilderStatus {
+  configured: boolean;
+  model: string;
+  draftsPerHour: number;
+  usedThisHour?: number;
+  endpoint?: string;
+  responseFormat?: string;
+}
 
 async function fetchJson(url: string, init?: RequestInit) {
   const res = await fetch(url, {
@@ -48,7 +36,11 @@ async function fetchJson(url: string, init?: RequestInit) {
     ...init,
   });
   const body = await res.json().catch(() => null);
-  if (!res.ok) throw new Error((body as any)?.error ?? `HTTP ${res.status}`);
+  if (!res.ok) {
+    const err = new Error((body as any)?.error ?? `HTTP ${res.status}`) as Error & { endpoint?: string };
+    err.endpoint = (body as any)?.endpoint;
+    throw err;
+  }
   return body as any;
 }
 
@@ -64,18 +56,22 @@ export default function RuleBuilder() {
   const deleteAuto = useDeleteAutomation();
 
   const [prompt, setPrompt] = useState('');
-  const [draft, setDraft] = useState<Draft | null>(null);
+  const [draft, setDraft] = useState<RuleValue | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [explanation, setExplanation] = useState('');
   const [warnings, setWarnings] = useState<string[]>([]);
   const [aiError, setAiError] = useState<string | null>(null);
+  const [aiEndpoint, setAiEndpoint] = useState<string | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
-  const [status, setStatus] = useState<{ configured: boolean; model: string; draftsPerHour: number } | null>(null);
+  const [status, setStatus] = useState<BuilderStatus | null>(null);
+
+  const loadStatus = () =>
+    fetchJson('/api/rule-builder/status').then(setStatus).catch(() => setStatus(null));
 
   useEffect(() => {
-    fetchJson('/api/rule-builder/status').then(setStatus).catch(() => setStatus(null));
+    loadStatus();
   }, []);
 
   const brokerOptions = useMemo(() => {
@@ -84,10 +80,15 @@ export default function RuleBuilder() {
     return Array.from(connected);
   }, [accounts]);
 
-  const build = async () => {
+  const resetMessages = () => {
     setAiError(null);
+    setAiEndpoint(null);
     setSaveError(null);
     setSaved(false);
+  };
+
+  const build = async () => {
+    resetMessages();
     if (prompt.trim().length < 3) {
       setAiError('Describe the rule first.');
       return;
@@ -105,8 +106,10 @@ export default function RuleBuilder() {
       setDraft(result.rule);
       setExplanation(result.explanation ?? '');
       setWarnings(Array.isArray(result.warnings) ? result.warnings : []);
+      loadStatus();
     } catch (err: any) {
       setAiError(err?.message ?? 'Rule builder unavailable.');
+      setAiEndpoint(err?.endpoint ?? null);
     } finally {
       setAiLoading(false);
     }
@@ -114,8 +117,8 @@ export default function RuleBuilder() {
 
   const save = async () => {
     if (!draft) return;
-    setSaveError(null);
-    setSaved(false);
+    resetMessages();
+
     const payload = {
       symbol: draft.symbol,
       condition: draft.condition,
@@ -126,15 +129,15 @@ export default function RuleBuilder() {
       limitPrice: draft.orderType === 'limit' ? Number(draft.limitPrice) : undefined,
       broker: draft.broker,
     };
+
     try {
       if (editingId) {
         await fetchJson(`/api/automations/${editingId}`, { method: 'PATCH', body: JSON.stringify(payload) });
         queryClient.invalidateQueries({ queryKey: getListAutomationsQueryKey() });
-        setSaved(true);
       } else {
         await createAuto.mutateAsync({ data: payload as any });
-        setSaved(true);
       }
+      setSaved(true);
       setDraft(null);
       setEditingId(null);
       setPrompt('');
@@ -146,6 +149,7 @@ export default function RuleBuilder() {
   };
 
   const startEdit = (rule: any) => {
+    resetMessages();
     setEditingId(rule.id);
     setDraft({
       symbol: rule.symbol,
@@ -160,8 +164,6 @@ export default function RuleBuilder() {
     setPrompt('');
     setExplanation('');
     setWarnings([]);
-    setAiError(null);
-    setSaved(false);
   };
 
   const cancel = () => {
@@ -170,24 +172,30 @@ export default function RuleBuilder() {
     setPrompt('');
     setExplanation('');
     setWarnings([]);
-    setAiError(null);
-    setSaveError(null);
+    resetMessages();
   };
-
-  const setField = <K extends keyof Draft>(key: K, value: Draft[K]) =>
-    setDraft(d => (d ? { ...d, [key]: value } : d));
 
   return (
     <div className="flex flex-col gap-6 font-mono max-w-6xl mx-auto w-full">
-      <div className="flex items-center justify-between border-b border-border pb-4">
+      <div className="flex items-center justify-between border-b border-border pb-4 gap-3 flex-wrap">
         <h1 className="text-lg font-bold tracking-widest flex items-center gap-2">
           <Wand2 className="w-5 h-5 text-primary" />
           RULE BUILDER
         </h1>
-        <span className={cn('text-[10px] font-bold px-2 py-0.5 border',
-          status?.configured ? 'text-up border-up/30 bg-up/10' : 'text-yellow-400 border-yellow-400/30 bg-yellow-400/10')}>
-          {status ? (status.configured ? `AI READY · ${status.model}` : 'AI NOT CONFIGURED') : 'CHECKING…'}
-        </span>
+        <div className="flex items-center gap-2">
+          {status?.configured && status.usedThisHour !== undefined && (
+            <span className="text-[10px] text-muted-foreground" title={status.endpoint}>
+              {status.usedThisHour}/{status.draftsPerHour} DRAFTS THIS HOUR
+            </span>
+          )}
+          <span
+            className={cn('text-[10px] font-bold px-2 py-0.5 border',
+              status?.configured ? 'text-up border-up/30 bg-up/10' : 'text-yellow-400 border-yellow-400/30 bg-yellow-400/10')}
+            title={status?.endpoint ? `Endpoint: ${status.endpoint}` : undefined}
+          >
+            {status ? (status.configured ? `AI READY · ${status.model}` : 'AI NOT CONFIGURED') : 'CHECKING…'}
+          </span>
+        </div>
       </div>
 
       {status && !status.configured && (
@@ -229,7 +237,12 @@ export default function RuleBuilder() {
             </div>
 
             {aiError && (
-              <div className="text-down text-[10px] p-2 bg-down/10 border border-down/30">{aiError}</div>
+              <div className="text-down text-[10px] p-2 bg-down/10 border border-down/30">
+                <div>{aiError}</div>
+                {aiEndpoint && (
+                  <div className="text-muted-foreground mt-1">Endpoint: {aiEndpoint}</div>
+                )}
+              </div>
             )}
 
             <div className="flex gap-2">
@@ -319,103 +332,12 @@ export default function RuleBuilder() {
             </div>
           ) : (
             <div className="p-4 border border-border bg-card flex flex-col gap-3">
-              <div className="grid grid-cols-2 gap-2">
-                <label className="flex flex-col gap-1">
-                  <span className="text-[10px] text-muted-foreground">SYMBOL</span>
-                  <select
-                    value={draft.symbol}
-                    onChange={e => setField('symbol', e.target.value)}
-                    className="bg-input border border-border text-foreground px-2 py-1.5 text-xs focus:outline-none focus:border-primary"
-                  >
-                    {!markets?.some(m => m.symbol === draft.symbol) && (
-                      <option value={draft.symbol}>{draft.symbol}</option>
-                    )}
-                    {markets?.map(m => <option key={m.symbol} value={m.symbol}>{m.symbol}</option>)}
-                  </select>
-                </label>
-
-                <label className="flex flex-col gap-1">
-                  <span className="text-[10px] text-muted-foreground">CONDITION</span>
-                  <select
-                    value={draft.condition}
-                    onChange={e => setField('condition', e.target.value as Draft['condition'])}
-                    className="bg-input border border-border text-foreground px-2 py-1.5 text-xs focus:outline-none focus:border-primary"
-                  >
-                    <option value="lte">≤ drops to</option>
-                    <option value="gte">≥ rises to</option>
-                  </select>
-                </label>
-
-                <label className="flex flex-col gap-1">
-                  <span className="text-[10px] text-muted-foreground">TRIGGER PRICE ($)</span>
-                  <input
-                    type="number"
-                    step="any"
-                    value={draft.triggerPrice}
-                    onChange={e => setField('triggerPrice', Number(e.target.value))}
-                    className="bg-input border border-border text-foreground px-2 py-1.5 text-xs focus:outline-none focus:border-primary"
-                  />
-                </label>
-
-                <label className="flex flex-col gap-1">
-                  <span className="text-[10px] text-muted-foreground">QUANTITY</span>
-                  <input
-                    type="number"
-                    step="any"
-                    value={draft.quantity}
-                    onChange={e => setField('quantity', Number(e.target.value))}
-                    className="bg-input border border-border text-foreground px-2 py-1.5 text-xs focus:outline-none focus:border-primary"
-                  />
-                </label>
-
-                <label className="flex flex-col gap-1">
-                  <span className="text-[10px] text-muted-foreground">SIDE</span>
-                  <select
-                    value={draft.side}
-                    onChange={e => setField('side', e.target.value as Draft['side'])}
-                    className="bg-input border border-border text-foreground px-2 py-1.5 text-xs focus:outline-none focus:border-primary"
-                  >
-                    <option value="buy">BUY</option>
-                    <option value="sell">SELL</option>
-                  </select>
-                </label>
-
-                <label className="flex flex-col gap-1">
-                  <span className="text-[10px] text-muted-foreground">ORDER TYPE</span>
-                  <select
-                    value={draft.orderType}
-                    onChange={e => setField('orderType', e.target.value as Draft['orderType'])}
-                    className="bg-input border border-border text-foreground px-2 py-1.5 text-xs focus:outline-none focus:border-primary"
-                  >
-                    <option value="market">MARKET</option>
-                    <option value="limit">LIMIT</option>
-                  </select>
-                </label>
-
-                {draft.orderType === 'limit' && (
-                  <label className="flex flex-col gap-1">
-                    <span className="text-[10px] text-muted-foreground">LIMIT PRICE ($)</span>
-                    <input
-                      type="number"
-                      step="any"
-                      value={draft.limitPrice ?? ''}
-                      onChange={e => setField('limitPrice', Number(e.target.value))}
-                      className="bg-input border border-border text-foreground px-2 py-1.5 text-xs focus:outline-none focus:border-primary"
-                    />
-                  </label>
-                )}
-
-                <label className="flex flex-col gap-1">
-                  <span className="text-[10px] text-muted-foreground">EXECUTE VIA</span>
-                  <select
-                    value={draft.broker}
-                    onChange={e => setField('broker', e.target.value as Broker)}
-                    className="bg-input border border-border text-foreground px-2 py-1.5 text-xs focus:outline-none focus:border-primary"
-                  >
-                    {brokerOptions.map(b => <option key={b} value={b}>{BROKER_LABELS[b] ?? b}</option>)}
-                  </select>
-                </label>
-              </div>
+              <RuleFields
+                value={draft}
+                onChange={patch => setDraft(d => (d ? { ...d, ...patch } : d))}
+                symbols={markets ?? []}
+                brokers={brokerOptions}
+              />
 
               <div className="text-[10px] text-muted-foreground leading-relaxed border-t border-border pt-2">
                 <AlertTriangle className="w-3 h-3 inline mb-0.5 mr-1" />
