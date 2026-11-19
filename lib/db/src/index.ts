@@ -10,7 +10,15 @@ if (!process.env.DATABASE_URL) {
   );
 }
 
-export const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+export const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  // Hosted Postgres (Supabase's pooler, Render) refuses plaintext connections and
+  // advertises that via sslmode. Local dev URLs omit it and keep connecting unencrypted.
+  ...(/sslmode=(require|verify-ca|verify-full)/.test(process.env.DATABASE_URL) ||
+  process.env.DATABASE_SSL === "true"
+    ? { ssl: { rejectUnauthorized: false } }
+    : {}),
+});
 export const db = drizzle(pool, { schema });
 
 export * from "./schema";
