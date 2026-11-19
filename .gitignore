@@ -47,3 +47,7 @@ Thumbs.db
 # Replit
 .cache/
 .local/
+
+# Local deploy credentials never get committed
+.cf-token
+.dev.vars*
