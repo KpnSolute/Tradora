@@ -47,6 +47,8 @@ function AlpacaAccountSection() {
   const change = history?.change ?? 0;
   const changePct = history?.changePct ?? 0;
   const isUp = change >= 0;
+  // Chart colours come from the terminal theme so the curve matches the rest of the UI.
+  const lineColor = isUp ? 'hsl(var(--up))' : 'hsl(var(--down))';
   const openPositions = positions ?? [];
   const positionValue = openPositions.reduce((sum, p) => sum + (p.marketValue ?? 0), 0);
   const top = [...openPositions].sort((a, b) => (b.marketValue ?? 0) - (a.marketValue ?? 0)).slice(0, 6);
@@ -101,44 +103,53 @@ function AlpacaAccountSection() {
               EQUITY CURVE UNAVAILABLE: {(historyError as Error).message}
             </div>
           ) : points.length < 2 ? (
-            <div className="h-full flex items-center justify-center text-xs text-muted-foreground border border-dashed border-border">
-              {history ? 'NOT ENOUGH HISTORY FOR THIS RANGE YET' : 'LOADING EQUITY CURVE…'}
+            <div className="h-full flex flex-col items-center justify-center gap-3 text-xs text-muted-foreground border border-dashed border-border px-4 text-center">
+              <span>{history ? 'ALPACA RETURNED NO EQUITY POINTS FOR THIS RANGE' : 'LOADING EQUITY CURVE…'}</span>
+              {history && range !== '1D' && (
+                <button
+                  onClick={() => setRange('1D')}
+                  className="px-3 py-1 text-[10px] font-bold tracking-widest border border-border hover:bg-muted"
+                >
+                  TRY 1D
+                </button>
+              )}
             </div>
           ) : (
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={points} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
                 <defs>
                   <linearGradient id="equityFill" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor={isUp ? '#22c55e' : '#ef4444'} stopOpacity={0.35} />
-                    <stop offset="100%" stopColor={isUp ? '#22c55e' : '#ef4444'} stopOpacity={0} />
+                    <stop offset="0%" stopColor={lineColor} stopOpacity={0.35} />
+                    <stop offset="100%" stopColor={lineColor} stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <CartesianGrid stroke="#2a2f3a" strokeDasharray="3 3" vertical={false} />
+                <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="3 3" vertical={false} />
                 <XAxis
                   dataKey="t"
                   tickFormatter={fmtTick}
-                  tick={{ fontSize: 10, fill: '#8b93a1' }}
-                  axisLine={{ stroke: '#2a2f3a' }}
+                  tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
+                  axisLine={{ stroke: 'hsl(var(--border))' }}
                   tickLine={false}
                   minTickGap={40}
                 />
                 <YAxis
                   domain={['auto', 'auto']}
                   tickFormatter={(v: number) => formatCompactPrice(v)}
-                  tick={{ fontSize: 10, fill: '#8b93a1' }}
+                  tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
                   axisLine={false}
                   tickLine={false}
                   width={64}
                 />
                 <Tooltip
-                  contentStyle={{ background: '#0b0d10', border: '1px solid #2a2f3a', borderRadius: 0, fontSize: 11 }}
+                  contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 0, fontSize: 11 }}
+                  labelStyle={{ color: 'hsl(var(--muted-foreground))' }}
                   labelFormatter={(label) => new Date(label as string).toLocaleString()}
                   formatter={(value: any) => [formatPrice(Number(value)), 'EQUITY']}
                 />
                 <Area
                   type="monotone"
                   dataKey="equity"
-                  stroke={isUp ? '#22c55e' : '#ef4444'}
+                  stroke={lineColor}
                   strokeWidth={1.5}
                   fill="url(#equityFill)"
                   isAnimationActive={false}

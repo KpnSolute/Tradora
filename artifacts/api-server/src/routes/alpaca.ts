@@ -80,33 +80,62 @@ router.get("/alpaca/account", async (req, res): Promise<void> => {
 });
 
 // GET /alpaca/portfolio-history — real equity curve from Alpaca
-const HISTORY_TIMEFRAMES: Record<string, string> = {
+// Alpaca periods are <n><D|W|M|A> — a year is "1A", not "1Y" — and any period
+// longer than 30 days only accepts a 1D timeframe.
+const RANGE_TO_ALPACA_PERIOD: Record<string, string> = {
+  "1D": "1D",
+  "1W": "1W",
+  "1M": "1M",
+  "3M": "3M",
+  "1Y": "1A",
+  "ALL": "all",
+};
+
+const PERIOD_DEFAULT_TIMEFRAME: Record<string, string> = {
   "1D": "5Min",
   "1W": "15Min",
   "1M": "1D",
   "3M": "1D",
   "1A": "1D",
-  "1Y": "1D",
-  all: "1D",
+  "all": "1D",
 };
+
+const PERIOD_DAYS: Record<string, number> = {
+  "1D": 1, "1W": 7, "1M": 30, "3M": 90, "1A": 365, "all": 3650,
+};
+
+const VALID_TIMEFRAMES = new Set(["1Min", "5Min", "15Min", "1H", "1D"]);
+const INTRADAY_TIMEFRAMES = new Set(["1Min", "5Min", "15Min", "1H"]);
 
 router.get("/alpaca/portfolio-history", async (req, res): Promise<void> => {
   if (!requireAuth(req, res)) return;
-  const client = await getAlpacaClient(req.session.userId!, res);
-  if (!client) return;
 
-  const rawPeriod = String(req.query.period ?? "1D").toUpperCase();
-  const period = rawPeriod === "ALL" ? "all" : rawPeriod;
-  if (!(period in HISTORY_TIMEFRAMES)) {
-    res.status(400).json({ error: `period must be one of: ${Object.keys(HISTORY_TIMEFRAMES).join(", ")}` });
+  // Validate the request before touching the broker so bad input never costs a call.
+  const range = String(req.query.period ?? "1D").toUpperCase();
+  const alpacaPeriod = RANGE_TO_ALPACA_PERIOD[range];
+  if (!alpacaPeriod) {
+    res.status(400).json({ error: `period must be one of: 1D, 1W, 1M, 3M, 1Y, all` });
     return;
   }
 
   const requested = typeof req.query.timeframe === "string" ? req.query.timeframe : "";
-  const timeframe = requested || HISTORY_TIMEFRAMES[period];
+  if (requested && !VALID_TIMEFRAMES.has(requested)) {
+    res.status(400).json({ error: `timeframe must be one of: ${[...VALID_TIMEFRAMES].join(", ")}` });
+    return;
+  }
+
+  // Alpaca rejects sub-daily timeframes beyond 30 days, so clamp instead of 400-ing.
+  let timeframe = requested || PERIOD_DEFAULT_TIMEFRAME[alpacaPeriod];
+  if ((PERIOD_DAYS[alpacaPeriod] ?? 0) > 30 && timeframe !== "1D") timeframe = "1D";
+
+  // Crypto accounts want the full 24/7 session rather than core equity hours.
+  const intradayReporting = INTRADAY_TIMEFRAMES.has(timeframe) ? "continuous" as const : undefined;
+
+  const client = await getAlpacaClient(req.session.userId!, res);
+  if (!client) return;
 
   try {
-    const history = await client.getPortfolioHistory(period, timeframe);
+    const history = await client.getPortfolioHistory(alpacaPeriod, timeframe, intradayReporting);
     const points = history.timestamp
       .map((ts, i) => ({ t: new Date(ts * 1000).toISOString(), equity: history.equity[i] }))
       .filter((p): p is { t: string; equity: number } => typeof p.equity === "number");
@@ -115,7 +144,7 @@ router.get("/alpaca/portfolio-history", async (req, res): Promise<void> => {
     const change = last - history.base_value;
 
     res.json({
-      period,
+      period: range,
       timeframe: history.timeframe ?? timeframe,
       baseValue: history.base_value,
       change: +change.toFixed(2),
@@ -123,7 +152,7 @@ router.get("/alpaca/portfolio-history", async (req, res): Promise<void> => {
       points,
     });
   } catch (err: any) {
-    logger.warn({ err }, "Alpaca getPortfolioHistory error");
+    logger.warn({ err, alpacaPeriod, timeframe }, "Alpaca getPortfolioHistory error");
     res.status(502).json({ error: `Alpaca error: ${err?.message}` });
   }
 });

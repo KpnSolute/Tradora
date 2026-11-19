@@ -131,9 +131,14 @@ export class AlpacaClient {
   }
 
   /** Equity timeseries for the account's equity curve (1D…1Y). */
-  async getPortfolioHistory(period = "1D", timeframe = "5Min"): Promise<AlpacaPortfolioHistory> {
-    const qs = new URLSearchParams({ period, timeframe }).toString();
-    return this.request<AlpacaPortfolioHistory>(`/v2/account/portfolio/history?${qs}`);
+  async getPortfolioHistory(
+    period = "1D",
+    timeframe = "5Min",
+    intradayReporting?: "market_hours" | "continuous",
+  ): Promise<AlpacaPortfolioHistory> {
+    const params = new URLSearchParams({ period, timeframe });
+    if (intradayReporting) params.set("intraday_reporting", intradayReporting);
+    return this.request<AlpacaPortfolioHistory>(`/v2/account/portfolio/history?${params.toString()}`);
   }
 
   async placeOrder(order: AlpacaOrderInput): Promise<AlpacaOrder> {
