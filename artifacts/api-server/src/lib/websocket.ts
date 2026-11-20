@@ -19,7 +19,7 @@ import type { TickerData } from "./market-data";
 import { db, automationsTable, tradesTable, tradingAccountsTable } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
 import { getTicker, resolveMarket, streamRequestSymbols } from "./market-data";
-import { executeOrderIntent } from "./execution-gateway";
+import { executeOrderIntent, submitOrderIntent } from "./execution-gateway";
 import { getBrokerClient } from "./broker-factory";
 
 // ─── Frontend client subscriptions ───────────────────────────────────────────
@@ -81,7 +81,23 @@ async function fireAutomation(rule: any, currentPrice: number): Promise<void> {
     const limitPrice = rule.limitPrice ? parseFloat(rule.limitPrice) : undefined;
 
     if (rule.broker === "paper") {
-      // Paper: insert into local trades table
+      // Paper fills are simulated locally, but they still pass the gateway so the
+      // kill switch stops them and the fill lands in the audit trail.
+      const decision = submitOrderIntent({
+        source: "automation:paper",
+        userId: rule.userId,
+        broker: "paper",
+        accountMode: "paper",
+        localFill: true,
+        symbol: rule.symbol,
+        side: rule.side,
+        type: rule.orderType === "limit" ? "limit" : "market",
+        qty,
+        limitPrice,
+        referencePrice: currentPrice,
+      });
+      if (decision.outcome !== "paper_local") throw new Error(decision.message);
+
       const price = limitPrice ?? currentPrice;
       await db.insert(tradesTable).values({
         userId: rule.userId,
