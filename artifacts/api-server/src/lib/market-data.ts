@@ -55,6 +55,20 @@ export function updateTickerFromStream(data: TickerData): void {
   tickerCache.set(data.symbol, data);
 }
 
+// Symbols the stream must carry live, beyond the default pairs: what the UI is
+// watching and what an active automation is waiting on. Discovery is only useful
+// if the token you found also ticks and can trigger.
+const streamRequests = new Set<string>();
+
+export function requestStreamSymbol(symbol: string): void {
+  const normalized = symbol.trim().toUpperCase();
+  if (normalized) streamRequests.add(normalized);
+}
+
+export function streamRequestSymbols(): string[] {
+  return [...streamRequests];
+}
+
 // ─── Pair catalog (token discovery) ───────────────────────────────────────────
 
 const CATALOG_TTL_MS = 30 * 60_000;

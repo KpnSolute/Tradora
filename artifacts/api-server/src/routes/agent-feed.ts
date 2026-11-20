@@ -15,7 +15,7 @@ import { Router, type IRouter } from "express";
 import { and, desc, eq } from "drizzle-orm";
 import { db, tradeIntentsTable, tradesTable } from "@workspace/db";
 import { logger } from "../lib/logger";
-import { fetchCandles, getTicker, SUPPORTED_MARKETS } from "../lib/market-data";
+import { fetchCandles, getTicker, resolveMarket } from "../lib/market-data";
 import {
   generateTradeIntent,
   StrategyEngineError,
@@ -149,11 +149,10 @@ router.post("/agent-feed/generate", async (req, res): Promise<void> => {
   const userId = req.session.userId!;
 
   const symbol = String(req.body?.symbol ?? "").trim().toUpperCase();
-  const market = SUPPORTED_MARKETS.find((item) => item.symbol === symbol);
+  // Any token Kraken lists can be analysed, not just the default pairs.
+  const market = await resolveMarket(symbol);
   if (!market) {
-    res.status(400).json({
-      error: `symbol must be one of: ${SUPPORTED_MARKETS.map((m) => m.symbol).join(", ")}`,
-    });
+    res.status(400).json({ error: `unknown or untradable symbol: ${symbol}` });
     return;
   }
 

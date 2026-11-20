@@ -18,7 +18,7 @@ import {
 import type { TickerData } from "./market-data";
 import { db, automationsTable, tradesTable, tradingAccountsTable } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
-import { getTicker } from "./market-data";
+import { getTicker, resolveMarket, streamRequestSymbols } from "./market-data";
 import { executeOrderIntent } from "./execution-gateway";
 import { getBrokerClient } from "./broker-factory";
 
@@ -194,6 +194,60 @@ async function fireAutomation(rule: any, currentPrice: number): Promise<void> {
   }
 }
 
+// ─── Kraken subscriptions ─────────────────────────────────────────────────────
+
+// The default pairs are always streamed; discovered tokens are added on demand so
+// a token you find also ticks live and its automations can trigger.
+let krakenStream: WebSocket | null = null;
+const streamedPairs = new Set<string>();
+
+async function ensureStreamed(symbols: string[]): Promise<void> {
+  const wanted: string[] = [];
+  for (const symbol of symbols) {
+    const meta = await resolveMarket(symbol);
+    if (!meta || streamedPairs.has(meta.wsSymbol)) continue;
+    streamedPairs.add(meta.wsSymbol);
+    wanted.push(meta.wsSymbol);
+  }
+  if (wanted.length === 0) return;
+
+  if (krakenStream?.readyState === WebSocket.OPEN) {
+    krakenStream.send(JSON.stringify({
+      method: "subscribe",
+      params: { channel: "ticker", symbol: wanted },
+    }));
+    logger.info({ pairs: wanted }, "Subscribed to additional Kraken tickers");
+  } else {
+    // Not connected: forget them so the next connect subscribes to everything again.
+    for (const pair of wanted) streamedPairs.delete(pair);
+  }
+}
+
+// Sweep rule symbols that may not be in the stream (a rule can watch any listed
+// token), so an automation still fires on a token nobody is subscribed to.
+async function sweepAutomations(): Promise<void> {
+  try {
+    const rules = await db
+      .select()
+      .from(automationsTable)
+      .where(eq(automationsTable.status, "active"));
+    const symbols = [...new Set(rules.map(rule => rule.symbol))];
+    if (symbols.length === 0) return;
+
+    await ensureStreamed(symbols);
+    for (const symbol of symbols) {
+      const ticker = await getTicker(symbol);
+      if (ticker) await evaluateAutomations(symbol, ticker.price);
+    }
+  } catch (err) {
+    logger.warn({ err }, "Automation sweep error");
+  }
+}
+
+function startAutomationSweep(intervalMs = 20_000): void {
+  setInterval(() => { sweepAutomations().catch(() => {}); }, intervalMs);
+}
+
 // ─── Kraken WebSocket v2 public stream ────────────────────────────────────────
 
 const KRAKEN_WS_URL = "wss://ws.kraken.com/v2";
@@ -210,11 +264,13 @@ function connectKrakenStream(): void {
 
   ws.on("open", () => {
     logger.info("Kraken WS v2 connected — subscribing to live tickers");
-    const symbols = SUPPORTED_MARKETS.map(m => m.wsSymbol);
-    ws.send(JSON.stringify({
-      method: "subscribe",
-      params: { channel: "ticker", symbol: symbols },
-    }));
+    krakenStream = ws;
+    streamedPairs.clear();
+    const symbols = [...new Set([
+      ...SUPPORTED_MARKETS.map(m => m.symbol),
+      ...streamRequestSymbols(),
+    ])];
+    ensureStreamed(symbols).catch(err => logger.warn({ err }, "Kraken subscribe failed"));
   });
 
   ws.on("message", (raw: Buffer) => {
@@ -260,6 +316,8 @@ function connectKrakenStream(): void {
   });
 
   ws.on("close", (code, reason) => {
+    krakenStream = null;
+    streamedPairs.clear();
     logger.info({ code, reason: reason.toString() }, "Kraken WS closed — reconnecting in 5s");
     setTimeout(connectKrakenStream, 5_000);
   });
@@ -331,6 +389,7 @@ export function createWebSocketServer(server: import("http").Server): WebSocketS
   // refetches whenever the stream goes quiet, so prices never sit frozen.
   void refreshTickersFromRest();
   startTickerWatchdog();
+  startAutomationSweep();
   connectKrakenStream();
 
   const wss = new WebSocketServer({ server, path: "/ws" });
@@ -352,6 +411,8 @@ export function createWebSocketServer(server: import("http").Server): WebSocketS
           // userId is already set from the session; ignore any client-provided value
           logger.info({ symbols: [...client.symbols], userId: client.userId }, "Client subscribed");
           sendInitialTickers(client);
+          // A discovered token needs a live stream too, not just a REST snapshot.
+          ensureStreamed([...client.symbols]).catch(() => {});
         }
         if (msg.type === "unsubscribe" && Array.isArray(msg.symbols)) {
           for (const s of msg.symbols) client.symbols.delete(s);
