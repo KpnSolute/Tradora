@@ -29,15 +29,15 @@ A professional dark-mode crypto trading terminal for power users. Supports live 
 - `lib/api-spec/openapi.yaml` — OpenAPI contract (source of truth)
 - `lib/db/src/schema/` — Drizzle table definitions (users, watchlist, trades, trading_accounts)
 - `artifacts/api-server/src/routes/` — Express route handlers (auth, markets, watchlist, trades, portfolio, accounts, settings)
-- `artifacts/api-server/src/lib/market-data.ts` — CoinGecko price fetcher + synthetic candle/signal generator
-- `artifacts/api-server/src/lib/websocket.ts` — WebSocket server broadcasting live tickers every 3s
+- `artifacts/api-server/src/lib/market-data.ts` — Kraken price cache (WS v2 ticks reconciled by a REST snapshot), real OHLC candles, indicator-based signals
+- `artifacts/api-server/src/lib/websocket.ts` — client ticker fan-out, Kraken WS v2 stream, automation engine
 - `artifacts/trading-terminal/src/` — React frontend (pages: login, register, dashboard, market/:symbol, trades, portfolio, accounts, settings)
 
 ## Architecture decisions
 
-- Market data uses CoinGecko free API (no key) with a 60s in-memory cache and fallback seed prices if rate-limited.
-- Candlestick data is synthetically generated from current price + realistic volatility — avoids paid historical data APIs.
-- Trading signals are derived from 24h price change as a proxy for momentum (RSI/MACD are approximated).
+- Market data uses the Kraken public API (no key): `wss://ws.kraken.com/v2` ticker ticks fill the in-memory cache, and a REST snapshot refetches anything older than 15s, so a cold start or a dropped stream still serves a real exchange price. No placeholder/seed prices exist — a price is either from Kraken or absent.
+- Candlesticks are the real OHLCV series from Kraken's `/0/public/OHLC`.
+- Trading signals are computed from that series: RSI(14), MACD(12,26,9), an EMA(26) trend read, and support/resistance from recent swing lows/highs.
 - Paper trading balance starts at $10,000 virtual funds; real trading mode requires connecting an exchange account.
 - WebSocket path `/ws` is registered in the API server's `artifact.toml` paths alongside `/api` so the proxy forwards upgrades.
 - Used `bcryptjs` (pure JS) instead of `bcrypt` to avoid native build approval requirement on Replit.

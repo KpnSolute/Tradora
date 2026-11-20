@@ -67,8 +67,8 @@ router.get("/markets/:symbol/signals", async (req, res): Promise<void> => {
     res.status(404).json({ error: "Market not found" });
     return;
   }
-  await getTicker(symbol); // ensure ticker is loaded
-  const signals = generateSignals(symbol);
+  // Signals are computed from the live ticker and the real candle series.
+  const signals = await generateSignals(symbol);
   res.json(signals);
 });
 

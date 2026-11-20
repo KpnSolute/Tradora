@@ -12,6 +12,8 @@ import {
   updateTickerFromStream,
   fromKrakenWsSymbol,
   getTickers,
+  refreshTickersFromRest,
+  startTickerWatchdog,
 } from "./market-data";
 import type { TickerData } from "./market-data";
 import { db, automationsTable, tradesTable, tradingAccountsTable } from "@workspace/db";
@@ -300,6 +302,11 @@ function parseSession(req: IncomingMessage): Promise<void> {
 }
 
 export function createWebSocketServer(server: import("http").Server): WebSocketServer {
+  // Price the cache from Kraken REST before anything can be served, so a cold
+  // start answers with a real quote instead of a placeholder. The watchdog then
+  // refetches whenever the stream goes quiet, so prices never sit frozen.
+  void refreshTickersFromRest();
+  startTickerWatchdog();
   connectKrakenStream();
 
   const wss = new WebSocketServer({ server, path: "/ws" });
