@@ -13,10 +13,12 @@ import { startMockModelServer } from "./mock-model-server.mjs";
 import { resolveProvider } from "../artifacts/api-server/src/lib/ai-provider.ts";
 import { generateRuleDraft } from "../artifacts/api-server/src/lib/rule-draft.ts";
 import {
+  executeOrderIntent,
   executionStatus,
   recentAudit,
   resetExecutionState,
   setKillSwitch,
+  setLiveMode,
   submitOrderIntent,
 } from "../artifacts/api-server/src/lib/execution-gateway.ts";
 
@@ -174,7 +176,7 @@ async function runDraftTests() {
 
 // ─── Execution gateway ───────────────────────────────────────────────────────
 
-function runGatewayTests() {
+async function runGatewayTests() {
   console.log("\nExecution gateway");
 
   delete process.env.EXECUTION_KILL_SWITCH;
@@ -183,7 +185,7 @@ function runGatewayTests() {
   delete process.env.EXECUTION_DAILY_NOTIONAL_USD;
   resetExecutionState();
 
-  const status = executionStatus();
+  const status = executionStatus(1);
   checkEqual("default mode is dry_run", status.mode, "dry_run");
   checkEqual("kill switch is off by default", status.killSwitchEngaged, false);
   checkEqual("live execution is disabled", status.liveEnabled, false);
@@ -262,22 +264,75 @@ function runGatewayTests() {
     JSON.stringify(killed).slice(0, 200),
   );
   check("engaged kill switch blocks paper fills too", killedPaper.outcome === "blocked");
-  checkEqual("kill switch state is reported", executionStatus().killSwitchEngaged, true);
-  checkEqual("kill switch source is the runtime override", executionStatus().killSwitchSource, "runtime");
+  checkEqual("kill switch state is reported", executionStatus(1).killSwitchEngaged, true);
+  checkEqual("kill switch source is the runtime override", executionStatus(1).killSwitchSource, "runtime");
 
   setKillSwitch(false);
-  process.env.EXECUTION_MODE = "live";
-  const live = submitOrderIntent(intent());
-  check(
-    "live mode is still refused by the quarantine",
-    live.outcome === "blocked" && live.code === "live_quarantined" && /quarantined/i.test(live.message),
-    JSON.stringify(live).slice(0, 200),
-  );
-  delete process.env.EXECUTION_MODE;
 
+  // Live execution is an explicit opt-in: a live account is not enough on its own.
+  const notOptedIn = submitOrderIntent(intent({ userId: 9 }));
+  check(
+    "broker orders stay dry-run until live is enabled",
+    notOptedIn.outcome === "dry_run",
+    JSON.stringify(notOptedIn).slice(0, 200),
+  );
+
+  const paperAccount = submitOrderIntent(intent({ userId: 9, accountMode: "paper" }));
+  check("a paper-mode account never goes live", paperAccount.outcome === "dry_run");
+
+  setLiveMode(9, true);
+  const armed = submitOrderIntent(intent({ userId: 9 }));
+  check(
+    "live mode turns a broker intent into a live decision",
+    armed.outcome === "live" && armed.notional === 600,
+    JSON.stringify(armed).slice(0, 200),
+  );
+  checkEqual("status reports live for that user", executionStatus(9).liveEnabled, true);
+  checkEqual("status keeps dry-run for everyone else", executionStatus(10).liveEnabled, false);
+
+  // Only a live decision may reach a broker.
+  let brokerCalls = 0;
+  const fakeBroker = async () => {
+    brokerCalls += 1;
+    return { id: "broker-order-1", status: "accepted" };
+  };
+
+  const dryRun = await executeOrderIntent(intent({ userId: 10 }), fakeBroker);
+  check("dry-run never calls the broker", dryRun.outcome === "dry_run" && brokerCalls === 0);
+
+  setLiveMode(10, true);
+  const executed = await executeOrderIntent(intent({ userId: 10 }), fakeBroker);
+  check(
+    "live decision calls the broker exactly once",
+    executed.outcome === "live" && brokerCalls === 1,
+    JSON.stringify(executed).slice(0, 200),
+  );
+  checkEqual("broker response is returned to the caller", executed.broker?.id, "broker-order-1");
+  checkEqual("audit records the broker order id", recentAudit(10)[0].brokerOrderId, "broker-order-1");
+  checkEqual("audit outcome is live_submitted", recentAudit(10)[0].outcome, "live_submitted");
+
+  setLiveMode(11, true);
+  const rejected = await executeOrderIntent(intent({ userId: 11 }), async () => {
+    throw new Error("insufficient buying power");
+  });
+  check(
+    "a broker rejection surfaces as a 502",
+    rejected.outcome === "blocked" && rejected.code === "broker_rejected" && rejected.httpStatus === 502,
+    JSON.stringify(rejected).slice(0, 200),
+  );
+  checkEqual("rejected order is audited as live_failed", recentAudit(11)[0].outcome, "live_failed");
+
+  const liveByEnv = (() => {
+    process.env.EXECUTION_MODE = "live";
+    const decision = submitOrderIntent(intent({ userId: 12 }));
+    delete process.env.EXECUTION_MODE;
+    return decision;
+  })();
+  check("the environment can enable live for every account", liveByEnv.outcome === "live");
+
+  resetExecutionState();
   process.env.EXECUTION_KILL_SWITCH = "1";
-  resetExecutionState(); // drop the runtime override so the env var decides
-  const envStatus = executionStatus();
+  const envStatus = executionStatus(1);
   checkEqual("EXECUTION_KILL_SWITCH=1 engages the switch from the environment", envStatus.killSwitchEngaged, true);
   checkEqual("kill switch source is reported as the environment", envStatus.killSwitchSource, "env");
   delete process.env.EXECUTION_KILL_SWITCH;
@@ -310,7 +365,7 @@ async function runLiveTest() {
 
 try {
   await runDraftTests();
-  runGatewayTests();
+  await runGatewayTests();
   await runLiveTest();
 } catch (err) {
   failures += 1;

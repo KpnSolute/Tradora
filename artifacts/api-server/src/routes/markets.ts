@@ -1,6 +1,8 @@
 import { Router, type IRouter } from "express";
 import {
-  SUPPORTED_MARKETS,
+  listMarkets,
+  searchMarkets,
+  resolveMarket,
   getTicker,
   getTickers,
   fetchCandles,
@@ -10,12 +12,14 @@ import {
 const router: IRouter = Router();
 
 router.get("/markets", async (_req, res): Promise<void> => {
-  res.json(SUPPORTED_MARKETS.map(m => ({
-    symbol:   m.symbol,
-    name:     m.name,
-    exchange: m.exchange,
-    type:     m.type,
-  })));
+  res.json(await listMarkets());
+});
+
+// Token discovery — search the Kraken catalog by ticker or asset name.
+router.get("/markets/search", async (req, res): Promise<void> => {
+  const query = typeof req.query.q === "string" ? req.query.q : "";
+  const limit = req.query.limit ? parseInt(String(req.query.limit), 10) : 25;
+  res.json(await searchMarkets(query, Number.isFinite(limit) ? limit : 25));
 });
 
 router.get("/markets/trending", async (_req, res): Promise<void> => {
@@ -46,8 +50,8 @@ router.get("/markets/:symbol/candles/:interval", async (req, res): Promise<void>
     return;
   }
 
-  const marketExists = SUPPORTED_MARKETS.find(m => m.symbol === symbol);
-  if (!marketExists) {
+  const market = await resolveMarket(symbol);
+  if (!market) {
     res.status(404).json({ error: "Market not found" });
     return;
   }
@@ -62,8 +66,8 @@ router.get("/markets/:symbol/candles/:interval", async (req, res): Promise<void>
 
 router.get("/markets/:symbol/signals", async (req, res): Promise<void> => {
   const symbol = Array.isArray(req.params.symbol) ? req.params.symbol[0] : req.params.symbol;
-  const marketExists = SUPPORTED_MARKETS.find(m => m.symbol === symbol);
-  if (!marketExists) {
+  const market = await resolveMarket(symbol);
+  if (!market) {
     res.status(404).json({ error: "Market not found" });
     return;
   }

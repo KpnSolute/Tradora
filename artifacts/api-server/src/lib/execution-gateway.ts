@@ -1,25 +1,32 @@
 /**
  * Canonical execution safety gateway — the single funnel every order intent
- * passes through (REST broker routes, REST Alpaca routes, the automation engine).
+ * passes through (REST broker routes, REST Alpaca routes, REST trades, the
+ * automation engine).
  *
- * Guarantees, in the order they are enforced:
+ * Order of enforcement:
  *
  *  1. Kill switch. `EXECUTION_KILL_SWITCH=1` (or POST /execution/kill-switch)
- *     refuses every intent, paper fills included. Default: off.
- *  2. Live execution stays quarantined. `EXECUTION_MODE` defaults to `dry_run`;
- *     asking for `live` is refused here and again inside every broker adapter,
- *     so no code path can reach a real broker yet.
- *  3. Dry-run. A broker-bound intent is validated, notional-capped and written to
- *     the audit log, and nothing leaves the process.
- *  4. Caps. Per-order and per-user-per-day notional limits apply to broker-bound
- *     intents. Local paper fills are simulated and are not capped.
+ *     refuses every intent, paper fills and live orders included. Default: off.
+ *  2. Local paper fills are simulated in-process and are not capped.
+ *  3. Broker-bound intents must be priceable, then clear the per-order and
+ *     per-user-per-day notional caps.
+ *  4. Live vs dry-run. A broker-bound intent is sent to the broker only when the
+ *     account is a `live` account AND live mode is on for that user — either the
+ *     operator switch (`EXECUTION_MODE=live` / `EXECUTION_LIVE_ENABLED=1`) or the
+ *     account owner's runtime opt-in (POST /execution/live-mode). Otherwise it is
+ *     a dry run: validated, capped, audited, and nothing is sent.
  *
- * Dependency-free on purpose: routes and the websocket engine both import it,
- * and the audit trail is an in-memory ring buffer so no migration is required.
+ * `executeOrderIntent` is the entry point that can actually place an order; it
+ * asks this module for the decision and only calls the caller's broker function
+ * for a `live` decision. Every other outcome is returned untouched.
+ *
+ * Dependency-free on purpose (no express, no db, no broker clients) so routes,
+ * the websocket engine and the test harness can all import it. The audit trail is
+ * an in-memory ring buffer, so no migration is required.
  */
 import {
   EXECUTION_KILL_SWITCH_MESSAGE,
-  ORDER_PLACEMENT_QUARANTINE_MESSAGE,
+  LIVE_EXECUTION_DISABLED_MESSAGE,
 } from "./order-quarantine.ts";
 
 export type ExecutionMode = "dry_run" | "live";
@@ -50,9 +57,17 @@ export interface OrderIntent {
 export type BlockCode =
   | "invalid_order"
   | "kill_switch"
-  | "live_quarantined"
   | "max_notional"
-  | "daily_notional";
+  | "daily_notional"
+  | "broker_rejected";
+
+export type AuditOutcome =
+  | "paper_local"
+  | "dry_run"
+  | "live"
+  | "live_submitted"
+  | "live_failed"
+  | "blocked";
 
 export interface AuditEntry {
   id: string;
@@ -67,14 +82,16 @@ export interface AuditEntry {
   qty: number;
   limitPrice: number | null;
   notional: number | null;
-  outcome: "paper_local" | "dry_run" | "blocked";
+  outcome: AuditOutcome;
   code?: BlockCode;
   message?: string;
+  brokerOrderId?: string;
 }
 
 export type Decision =
   | { outcome: "paper_local"; audit: AuditEntry; notional: number | null }
   | { outcome: "dry_run"; audit: AuditEntry; notional: number | null; message: string }
+  | { outcome: "live"; audit: AuditEntry; notional: number; message: string }
   | {
       outcome: "blocked";
       httpStatus: number;
@@ -83,12 +100,19 @@ export type Decision =
       audit: AuditEntry | null;
     };
 
+export type ExecutionResult<T = unknown> =
+  | Exclude<Decision, { outcome: "live" }>
+  | { outcome: "live"; audit: AuditEntry; notional: number; message: string; broker: T };
+
 const AUDIT_LIMIT = 200;
 const auditLog: AuditEntry[] = [];
 const dailyNotional = new Map<number, { day: string; total: number }>();
 
 /** `null` = follow the environment; a boolean = runtime override. */
 let killSwitchOverride: boolean | null = null;
+
+/** Per-user live opt-in. Absent means off; the environment can force it on. */
+const liveOptIn = new Map<number, boolean>();
 
 function envBool(value: string | undefined): boolean {
   if (!value) return false;
@@ -101,7 +125,26 @@ function numberFromEnv(value: string | undefined, fallback: number): number {
 }
 
 export function executionMode(): ExecutionMode {
-  return (process.env.EXECUTION_MODE ?? "").trim().toLowerCase() === "live" ? "live" : "dry_run";
+  const requested = (process.env.EXECUTION_LIVE_ENABLED ? "live" : process.env.EXECUTION_MODE ?? "")
+    .trim()
+    .toLowerCase();
+  if (requested === "live") return "live";
+  if (envBool(process.env.EXECUTION_LIVE_ENABLED)) return "live";
+  return "dry_run";
+}
+
+/** Operator switch: the environment can enable live regardless of the per-user opt-in. */
+export function liveEnabledByEnvironment(): boolean {
+  return executionMode() === "live";
+}
+
+export function liveModeEnabled(userId: number): boolean {
+  if (liveEnabledByEnvironment()) return true;
+  return liveOptIn.get(userId) === true;
+}
+
+export function setLiveMode(userId: number, enabled: boolean): void {
+  liveOptIn.set(userId, enabled);
 }
 
 export function killSwitchEngaged(): boolean {
@@ -129,20 +172,24 @@ export function setKillSwitch(engaged: boolean): void {
 /** Test hook — clears runtime state without restarting the process. */
 export function resetExecutionState(): void {
   killSwitchOverride = null;
+  liveOptIn.clear();
   auditLog.length = 0;
   dailyNotional.clear();
 }
 
-export function executionStatus() {
+export function executionStatus(userId: number, now = new Date()) {
+  const liveOn = liveModeEnabled(userId);
   return {
-    mode: executionMode(),
+    mode: liveOn ? "live" : "dry_run",
+    liveEnabled: liveOn,
+    liveSource: liveEnabledByEnvironment() ? "env" : liveOn ? "user" : "off",
     killSwitchEngaged: killSwitchEngaged(),
     killSwitchSource: killSwitchSource(),
-    liveEnabled: false,
-    liveQuarantineMessage: ORDER_PLACEMENT_QUARANTINE_MESSAGE,
     maxNotionalUsd: maxNotionalUsd(),
     dailyNotionalUsd: dailyNotionalUsd(),
+    dailyNotionalUsedUsd: usedToday(userId, now),
     auditedIntents: auditLog.length,
+    liveNotice: LIVE_EXECUTION_DISABLED_MESSAGE,
   };
 }
 
@@ -157,6 +204,11 @@ function pushAudit(entry: AuditEntry): AuditEntry {
   auditLog.push(entry);
   if (auditLog.length > AUDIT_LIMIT) auditLog.splice(0, auditLog.length - AUDIT_LIMIT);
   return entry;
+}
+
+function markAudit(id: string, patch: Partial<AuditEntry>): void {
+  const entry = auditLog.find(candidate => candidate.id === id);
+  if (entry) Object.assign(entry, patch);
 }
 
 function newAuditId(): string {
@@ -188,7 +240,8 @@ function invalid(entry: Omit<AuditEntry, "id" | "at" | "outcome">, message: stri
 
 /**
  * Decide what happens to one order intent. Never performs I/O: callers act on
- * the decision (insert a paper fill for `paper_local`, report for `dry_run`).
+ * the decision (insert a paper fill for `paper_local`, report for `dry_run`,
+ * place the order for `live`).
  */
 export function submitOrderIntent(intent: OrderIntent, now = new Date()): Decision {
   const base = {
@@ -222,7 +275,7 @@ export function submitOrderIntent(intent: OrderIntent, now = new Date()): Decisi
     Number(intent.notional) > 0 ? Number(intent.notional) : unitPrice !== null ? +(base.qty * unitPrice).toFixed(2) : null;
   base.notional = notional;
 
-  const audit = (outcome: AuditEntry["outcome"], extra: Partial<AuditEntry> = {}): AuditEntry =>
+  const audit = (outcome: AuditOutcome, extra: Partial<AuditEntry> = {}): AuditEntry =>
     pushAudit({ ...base, id: newAuditId(), at: now.toISOString(), outcome, ...extra });
 
   // 1. Kill switch — applies to everything, paper included.
@@ -241,19 +294,8 @@ export function submitOrderIntent(intent: OrderIntent, now = new Date()): Decisi
     return { outcome: "paper_local", audit: audit("paper_local"), notional };
   }
 
-  // 3. Live trading is still quarantined, whatever EXECUTION_MODE says.
-  if (executionMode() === "live") {
-    return {
-      outcome: "blocked",
-      httpStatus: 503,
-      code: "live_quarantined",
-      message: ORDER_PLACEMENT_QUARANTINE_MESSAGE,
-      audit: audit("blocked", { code: "live_quarantined", message: ORDER_PLACEMENT_QUARANTINE_MESSAGE }),
-    };
-  }
-
-  // 4. Notional caps. A market order we cannot price cannot be capped, so it is
-  //    refused rather than waved through — dry run or not.
+  // 3. A broker order we cannot price cannot be risk-checked, so it is refused
+  //    rather than waved through — dry run or not.
   if (notional === null) {
     return {
       outcome: "blocked",
@@ -294,6 +336,57 @@ export function submitOrderIntent(intent: OrderIntent, now = new Date()): Decisi
 
   addDailyNotional(intent.userId, notional, now);
 
-  const message = `${ORDER_PLACEMENT_QUARANTINE_MESSAGE} Dry run: intended ${base.side} ${base.qty} ${base.symbol} (${base.type}) for ${intent.broker} logged, nothing sent.`;
+  // 4. Live only for a live account with live mode on for this user.
+  if (intent.accountMode === "live" && liveModeEnabled(intent.userId)) {
+    const message = `Live ${base.side} ${base.qty} ${base.symbol} (${base.type}) routed to ${intent.broker}.`;
+    return {
+      outcome: "live",
+      audit: audit("live", { message }),
+      notional,
+      message,
+    };
+  }
+
+  const dryRunReason =
+    intent.accountMode === "live"
+      ? "live mode is off for this account"
+      : "this broker account is in paper mode";
+  const message = `Dry run (${dryRunReason}): intended ${base.side} ${base.qty} ${base.symbol} (${base.type}) for ${intent.broker} logged, nothing sent.`;
   return { outcome: "dry_run", audit: audit("dry_run", { message }), notional, message };
+}
+
+/**
+ * The one way to place a broker order. It asks the gateway for a decision and
+ * only invokes `place` for a `live` decision, then records what the broker said
+ * (or why it refused) back onto the same audit entry.
+ */
+export async function executeOrderIntent<T>(
+  intent: OrderIntent,
+  place: (intent: OrderIntent) => Promise<T>,
+  now = new Date(),
+): Promise<ExecutionResult<T>> {
+  const decision = submitOrderIntent(intent, now);
+  if (decision.outcome !== "live") return decision;
+
+  try {
+    const broker = await place(intent);
+    const brokerOrderId =
+      broker && typeof broker === "object" && "id" in broker ? String((broker as { id?: unknown }).id ?? "") : "";
+    markAudit(decision.audit.id, {
+      outcome: "live_submitted",
+      message: decision.message,
+      ...(brokerOrderId ? { brokerOrderId } : {}),
+    });
+    return { ...decision, broker };
+  } catch (err: any) {
+    const message = `Broker rejected the order: ${err?.message ?? "unknown error"}`;
+    markAudit(decision.audit.id, { outcome: "live_failed", code: "broker_rejected", message });
+    return {
+      outcome: "blocked",
+      httpStatus: 502,
+      code: "broker_rejected",
+      message,
+      audit: decision.audit,
+    };
+  }
 }

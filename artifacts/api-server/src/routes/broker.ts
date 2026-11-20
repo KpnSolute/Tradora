@@ -13,7 +13,7 @@ import { eq, and } from "drizzle-orm";
 import { getBrokerClient } from "../lib/broker-factory";
 import { getTicker } from "../lib/market-data";
 import { logger } from "../lib/logger";
-import { submitOrderIntent, type Decision } from "../lib/execution-gateway";
+import { executeOrderIntent, type Decision } from "../lib/execution-gateway";
 
 const router: IRouter = Router();
 
@@ -194,22 +194,56 @@ router.post("/broker-accounts/:exchange/orders", async (req, res): Promise<void>
   // Every order — paper fills included — passes the execution gateway, which owns the
   // kill switch, the notional caps and the audit trail. Broker-bound intents are
   // dry-run for now, so nothing below this line reaches an exchange.
-  const decision = submitOrderIntent({
-    source: "rest:broker:" + req.params.exchange,
-    userId: req.session.userId!,
-    broker: row.exchange,
-    accountMode: row.mode === "live" ? "live" : "paper",
-    localFill: row.mode === "paper",
-    symbol,
-    side,
-    type: orderType,
-    qty: parseFloat(String(qty)),
-    limitPrice: orderType === "limit" ? parsedLimit : undefined,
-    referencePrice: parsedLimit ?? ticker?.price,
-  });
+  const decision = await executeOrderIntent(
+    {
+      source: "rest:broker:" + req.params.exchange,
+      userId: req.session.userId!,
+      broker: row.exchange,
+      accountMode: row.mode === "live" ? "live" : "paper",
+      localFill: row.mode === "paper",
+      symbol,
+      side,
+      type: orderType,
+      qty: parseFloat(String(qty)),
+      limitPrice: orderType === "limit" ? parsedLimit : undefined,
+      referencePrice: parsedLimit ?? ticker?.price,
+    },
+    intent =>
+      getBrokerClient(row).placeOrder({
+        symbol: intent.symbol,
+        side: intent.side,
+        type: intent.type,
+        qty: intent.qty,
+        limitPrice: intent.limitPrice,
+      }),
+  );
 
   if (decision.outcome === "blocked") {
     respondBlocked(res, decision);
+    return;
+  }
+
+  if (decision.outcome === "live") {
+    const order = decision.broker as any;
+    logger.info(
+      { auditId: decision.audit.id, exchange: row.exchange, symbol, side, brokerOrderId: order?.id },
+      decision.message,
+    );
+    res.status(201).json({
+      id: String(order?.id ?? ""),
+      symbol: order?.symbol ?? symbol,
+      side: order?.side ?? side,
+      type: order?.type ?? orderType,
+      qty: order?.qty ?? parseFloat(String(qty)),
+      filledQty: order?.filledQty ?? 0,
+      filledAvgPrice: order?.filledAvgPrice ?? null,
+      status: order?.status ?? "submitted",
+      limitPrice: parsedLimit ?? null,
+      submittedAt: order?.submittedAt ?? new Date().toISOString(),
+      filledAt: order?.filledAt ?? null,
+      live: true,
+      auditId: decision.audit.id,
+    });
     return;
   }
 

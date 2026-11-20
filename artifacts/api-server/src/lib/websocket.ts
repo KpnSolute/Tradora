@@ -19,7 +19,8 @@ import type { TickerData } from "./market-data";
 import { db, automationsTable, tradesTable, tradingAccountsTable } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
 import { getTicker } from "./market-data";
-import { submitOrderIntent } from "./execution-gateway";
+import { executeOrderIntent } from "./execution-gateway";
+import { getBrokerClient } from "./broker-factory";
 
 // ─── Frontend client subscriptions ───────────────────────────────────────────
 
@@ -67,6 +68,7 @@ async function evaluateAutomations(symbol: string, price: number): Promise<void>
 async function fireAutomation(rule: any, currentPrice: number): Promise<void> {
   let dryRun = false;
   let intentMessage: string | undefined;
+  let liveOrder: { id: string; status: string } | null = null;
 
   // Mark triggered immediately
   await db
@@ -111,23 +113,39 @@ async function fireAutomation(rule: any, currentPrice: number): Promise<void> {
 
       if (accountRows.length === 0) throw new Error("No active " + rule.broker + " account");
 
-      const decision = submitOrderIntent({
-        source: "automation",
-        userId: rule.userId,
-        broker: rule.broker,
-        accountMode: accountRows[0].mode === "live" ? "live" : "paper",
-        localFill: false,
-        symbol: rule.symbol,
-        side: rule.side,
-        type: rule.orderType === "limit" ? "limit" : "market",
-        qty,
-        limitPrice,
-        referencePrice: currentPrice,
-      });
+      const accountRow = accountRows[0];
+      const decision = await executeOrderIntent(
+        {
+          source: "automation",
+          userId: rule.userId,
+          broker: rule.broker,
+          accountMode: accountRow.mode === "live" ? "live" : "paper",
+          localFill: false,
+          symbol: rule.symbol,
+          side: rule.side,
+          type: rule.orderType === "limit" ? "limit" : "market",
+          qty,
+          limitPrice,
+          referencePrice: currentPrice,
+        },
+        intent =>
+          getBrokerClient(accountRow).placeOrder({
+            symbol: intent.symbol,
+            side: intent.side,
+            type: intent.type,
+            qty: intent.qty,
+            limitPrice: intent.limitPrice,
+          }),
+      );
 
       if (decision.outcome === "blocked") throw new Error(decision.message);
       if (decision.outcome === "dry_run") {
         dryRun = true;
+        intentMessage = decision.message;
+      }
+      if (decision.outcome === "live") {
+        const placed = decision.broker as any;
+        liveOrder = { id: String(placed?.id ?? ""), status: String(placed?.status ?? "submitted") };
         intentMessage = decision.message;
       }
     }
@@ -137,7 +155,10 @@ async function fireAutomation(rule: any, currentPrice: number): Promise<void> {
       .set({ status: "completed" })
       .where(eq(automationsTable.id, rule.id));
 
-    logger.info({ ruleId: rule.id, broker: rule.broker, side: rule.side, qty: rule.quantity, dryRun }, "Automation completed");
+    logger.info(
+      { ruleId: rule.id, broker: rule.broker, side: rule.side, qty: rule.quantity, dryRun, liveOrder },
+      "Automation completed",
+    );
 
     broadcastToUser(rule.userId, {
       type: "automation_fired",
@@ -149,6 +170,7 @@ async function fireAutomation(rule: any, currentPrice: number): Promise<void> {
       triggerPrice: rule.triggerPrice,
       currentPrice,
       dryRun,
+      liveOrder,
       intentMessage,
     });
   } catch (err: any) {

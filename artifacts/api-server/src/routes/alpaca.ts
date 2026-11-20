@@ -13,7 +13,7 @@ import { db, tradingAccountsTable } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
 import { AlpacaClient, toAlpacaSymbol } from "../lib/alpaca";
 import { logger } from "../lib/logger";
-import { submitOrderIntent, type Decision } from "../lib/execution-gateway";
+import { executeOrderIntent, type Decision } from "../lib/execution-gateway";
 
 const router: IRouter = Router();
 
@@ -249,25 +249,57 @@ router.post("/alpaca/orders", async (req, res): Promise<void> => {
   // has a size. The gateway refuses the order when it cannot be priced at all.
   const qtyNum = qty ? parseFloat(String(qty)) : unitPrice ? +(Number(notional) / unitPrice).toFixed(8) : NaN;
 
-  const decision = submitOrderIntent({
-    source: "rest:alpaca",
-    userId: req.session.userId!,
-    broker: "alpaca",
-    accountMode: client.mode,
-    localFill: false,
-    symbol,
-    side,
-    type,
-    qty: qtyNum,
-    limitPrice,
-    notional: notional ? Number(notional) : undefined,
-    referencePrice: unitPrice,
-  });
+  const decision = await executeOrderIntent(
+    {
+      source: "rest:alpaca",
+      userId: req.session.userId!,
+      broker: "alpaca",
+      accountMode: client.mode,
+      localFill: false,
+      symbol,
+      side,
+      type,
+      qty: qtyNum,
+      limitPrice,
+      notional: notional ? Number(notional) : undefined,
+      referencePrice: unitPrice,
+    },
+    intent =>
+      client.placeOrder({
+        symbol: toAlpacaSymbol(intent.symbol),
+        ...(qty ? { qty: String(intent.qty) } : { notional: String(notional) }),
+        side: intent.side,
+        type: intent.type,
+        time_in_force: "gtc",
+        ...(intent.limitPrice ? { limit_price: String(intent.limitPrice) } : {}),
+      }),
+  );
 
   if (decision.outcome === "blocked") {
     respondBlocked(res, decision);
     return;
   }
+
+  if (decision.outcome === "live") {
+    const order = decision.broker as any;
+    logger.info({ auditId: decision.audit.id, symbol, side, notional, status: order?.status }, decision.message);
+    res.status(201).json({
+      status: "submitted",
+      live: true,
+      message: decision.message,
+      auditId: decision.audit.id,
+      notional: decision.notional,
+      id: order?.id ?? null,
+      symbol: order?.symbol ?? symbol,
+      side: order?.side ?? side,
+      type: order?.type ?? type,
+      qty: order?.qty ?? qtyNum,
+      orderStatus: order?.status ?? "submitted",
+      submittedAt: order?.submitted_at ?? new Date().toISOString(),
+    });
+    return;
+  }
+
   if (decision.outcome !== "dry_run") {
     res.status(500).json({ error: "Unexpected execution decision" });
     return;

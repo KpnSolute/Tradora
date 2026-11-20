@@ -3,7 +3,6 @@ import {
   useGetPortfolioSummary,
   useGetWatchlist,
   useGetTrendingMarkets,
-  useListMarkets,
   useAddToWatchlist,
   useRemoveFromWatchlist,
   useListAccounts,
@@ -334,12 +333,33 @@ export default function Dashboard() {
   const { data: trending } = useGetTrendingMarkets({
     query: { queryKey: getGetTrendingMarketsQueryKey(), refetchInterval: 5000 },
   });
-  const { data: markets } = useListMarkets();
-
   const addWatchlist = useAddToWatchlist();
   const removeWatchlist = useRemoveFromWatchlist();
 
-  const [newSymbol, setNewSymbol] = useState('');
+  // Token discovery: search Kraken's whole catalog, not just the default pairs.
+  const [symbolQuery, setSymbolQuery] = useState('');
+  const [symbolResults, setSymbolResults] = useState<Array<{ symbol: string; name: string; price: number | null; changePct24h: number | null }>>([]);
+  const [searchingSymbols, setSearchingSymbols] = useState(false);
+
+  useEffect(() => {
+    const query = symbolQuery.trim();
+    if (!query) {
+      setSymbolResults([]);
+      return;
+    }
+
+    let cancelled = false;
+    setSearchingSymbols(true);
+    const timer = setTimeout(() => {
+      fetch(`/api/markets/search?q=${encodeURIComponent(query)}&limit=8`, { credentials: 'same-origin' })
+        .then(r => (r.ok ? r.json() : []))
+        .then(rows => { if (!cancelled) setSymbolResults(rows); })
+        .catch(() => { if (!cancelled) setSymbolResults([]); })
+        .finally(() => { if (!cancelled) setSearchingSymbols(false); });
+    }, 250);
+
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [symbolQuery]);
   const [liveTickers, setLiveTickers] = useState<Record<string, any>>({});
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -405,16 +425,20 @@ export default function Dashboard() {
     if (wsRef.current) sendSubscribe(wsRef.current);
   }, [watchlistSymbols]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleAddWatchlist = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newSymbol) return;
-    const symbol = newSymbol.toUpperCase();
+  const addSymbol = (symbol: string) => {
+    if (!symbol) return;
     addWatchlist.mutate({ data: { symbol } }, {
       onSuccess: () => {
-        setNewSymbol('');
+        setSymbolQuery('');
+        setSymbolResults([]);
         queryClient.invalidateQueries({ queryKey: getGetWatchlistQueryKey() });
       },
     });
+  };
+
+  const handleAddWatchlist = (e: React.FormEvent) => {
+    e.preventDefault();
+    addSymbol(symbolResults[0]?.symbol ?? symbolQuery.trim().toUpperCase());
   };
 
   const handleRemoveWatchlist = (symbol: string, e: React.MouseEvent) => {
@@ -443,20 +467,41 @@ export default function Dashboard() {
             <form onSubmit={handleAddWatchlist} className="flex items-center gap-2">
               <div className="relative">
                 <Search className="w-4 h-4 text-muted-foreground absolute left-2 top-1/2 -translate-y-1/2 pointer-events-none" />
-                <select
-                  value={newSymbol}
-                  onChange={e => setNewSymbol(e.target.value)}
-                  className="w-48 bg-input border border-border text-foreground px-8 py-1 text-xs focus:outline-none focus:border-primary uppercase appearance-none"
-                >
-                  <option value="" disabled>ADD SYMBOL...</option>
-                  {markets?.map(m => (
-                    <option key={m.symbol} value={m.symbol}>{m.symbol} ({m.exchange})</option>
-                  ))}
-                </select>
+                <input
+                  value={symbolQuery}
+                  onChange={e => setSymbolQuery(e.target.value)}
+                  placeholder="SEARCH TOKENS..."
+                  className="w-52 bg-input border border-border text-foreground pl-8 pr-2 py-1 text-xs focus:outline-none focus:border-primary uppercase"
+                />
+                {symbolQuery.trim() && (
+                  <div className="absolute right-0 top-full mt-1 z-30 w-72 max-h-64 overflow-auto border border-border bg-card shadow-lg">
+                    {searchingSymbols && (
+                      <div className="px-3 py-2 text-[10px] text-muted-foreground">SEARCHING...</div>
+                    )}
+                    {!searchingSymbols && symbolResults.length === 0 && (
+                      <div className="px-3 py-2 text-[10px] text-muted-foreground">
+                        NO TOKENS MATCH "{symbolQuery.trim().toUpperCase()}"
+                      </div>
+                    )}
+                    {symbolResults.map(result => (
+                      <button
+                        key={result.symbol}
+                        type="button"
+                        onClick={() => addSymbol(result.symbol)}
+                        className="w-full flex items-center justify-between gap-3 px-3 py-2 text-left text-xs hover:bg-muted transition-colors"
+                      >
+                        <span className="font-bold">{result.symbol}</span>
+                        <span className="text-muted-foreground">
+                          {result.price != null ? formatCompactPrice(result.price) : '---'}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
               <button
                 type="submit"
-                disabled={addWatchlist.isPending || !newSymbol}
+                disabled={addWatchlist.isPending || !symbolQuery.trim()}
                 className="bg-primary/20 text-primary border border-primary/50 p-1 hover:bg-primary/30 transition-colors disabled:opacity-50"
               >
                 <Plus className="w-4 h-4" />
