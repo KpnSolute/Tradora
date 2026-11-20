@@ -133,6 +133,46 @@ router.patch("/automations/:id", async (req, res): Promise<void> => {
   res.json(serializeAutomation(rule));
 });
 
+// POST /automations/:id/retry — re-arm a rule that failed (or got stuck mid-fire)
+// so it watches its trigger again. It fires on the next tick that still matches.
+router.post("/automations/:id/retry", async (req, res): Promise<void> => {
+  if (!requireAuth(req, res)) return;
+  const userId = req.session.userId!;
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isFinite(id)) {
+    res.status(400).json({ error: "invalid rule id" });
+    return;
+  }
+
+  const [existing] = await db
+    .select()
+    .from(automationsTable)
+    .where(and(eq(automationsTable.id, id), eq(automationsTable.userId, userId)));
+
+  if (!existing) {
+    res.status(404).json({ error: "Rule not found" });
+    return;
+  }
+  if (existing.status !== "failed" && existing.status !== "triggered") {
+    res.status(409).json({
+      error: `Only a failed rule can be retried (this one is ${existing.status}).`,
+    });
+    return;
+  }
+
+  const [rule] = await db
+    .update(automationsTable)
+    .set({ status: "active", failureReason: null, firedAt: null })
+    .where(and(eq(automationsTable.id, id), eq(automationsTable.userId, userId)))
+    .returning();
+
+  logger.info(
+    { ruleId: rule.id, symbol: rule.symbol, previousStatus: existing.status },
+    "Automation retried",
+  );
+  res.json(serializeAutomation(rule));
+});
+
 // DELETE /automations/:id
 router.delete("/automations/:id", async (req, res): Promise<void> => {
   if (!requireAuth(req, res)) return;

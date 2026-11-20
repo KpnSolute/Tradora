@@ -8,7 +8,7 @@ import {
   getListAutomationsQueryKey,
 } from '@workspace/api-client-react';
 import { useQueryClient } from '@tanstack/react-query';
-import { Zap, Plus, Trash2, CheckCircle, XCircle, Activity, AlertTriangle } from 'lucide-react';
+import { Zap, Plus, Trash2, CheckCircle, XCircle, Activity, AlertTriangle, RotateCcw } from 'lucide-react';
 import { cn, formatCompactPrice } from '@/lib/utils';
 import { toast } from '@/hooks/use-toast';
 import { useAuth } from '@/lib/auth';
@@ -48,6 +48,7 @@ export default function Automations() {
 
   const [rule, setRule] = useState<RuleValue>(EMPTY_RULE);
   const [formError, setFormError] = useState<string | null>(null);
+  const [retryingId, setRetryingId] = useState<number | null>(null);
 
   // ── WebSocket: listen for real-time automation events ──────────────────────
   const wsRef = useRef<WebSocket | null>(null);
@@ -154,6 +155,33 @@ export default function Automations() {
     );
   };
 
+  // Re-arm a rule that failed so it watches its trigger again; it fires on the
+  // next tick that still matches.
+  const handleRetry = async (id: number) => {
+    setRetryingId(id);
+    try {
+      const res = await fetch(`/api/automations/${id}/retry`, { method: 'POST', credentials: 'same-origin' });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast({
+          title: 'Could not retry rule',
+          description: body?.error ?? 'Unknown error',
+          variant: 'destructive',
+        });
+        return;
+      }
+      queryClient.invalidateQueries({ queryKey: getListAutomationsQueryKey() });
+      toast({
+        title: 'Rule re-armed',
+        description: `Watching ${body.symbol} again — fires when price ${body.condition === 'gte' ? '≥' : '≤'} ${formatCompactPrice(body.triggerPrice)}.`,
+      });
+    } catch (err) {
+      toast({ title: 'Could not retry rule', description: (err as Error).message, variant: 'destructive' });
+    } finally {
+      setRetryingId(null);
+    }
+  };
+
   const handleDelete = (id: number) => {
     if (!confirm('Cancel this automation rule?')) return;
     deleteAuto.mutate({ id }, {
@@ -248,6 +276,17 @@ export default function Automations() {
 
                 {/* Actions */}
                 <div className="flex items-center gap-2 shrink-0">
+                  {(rule.status === 'failed' || rule.status === 'triggered') && (
+                    <button
+                      onClick={() => handleRetry(rule.id)}
+                      disabled={retryingId === rule.id}
+                      className="flex items-center gap-1 px-3 py-1.5 border border-yellow-500/40 text-yellow-400 hover:bg-yellow-500/10 transition-colors text-xs disabled:opacity-50"
+                      title="Re-arm this rule and try again"
+                    >
+                      <RotateCcw className="w-3 h-3" />
+                      {retryingId === rule.id ? 'RETRYING…' : 'RETRY'}
+                    </button>
+                  )}
                   {(rule.status === 'active') && (
                     <button
                       onClick={() => handleDelete(rule.id)}
@@ -327,7 +366,8 @@ export default function Automations() {
             <div className="flex items-start gap-2"><Zap className="w-3 h-3 mt-0.5 shrink-0 text-primary" /> Rules fire the instant a live price tick crosses your trigger</div>
             <div className="flex items-start gap-2"><CheckCircle className="w-3 h-3 mt-0.5 shrink-0 text-up" /> Each rule fires once, then marks itself completed</div>
             <div className="flex items-start gap-2"><Activity className="w-3 h-3 mt-0.5 shrink-0 text-primary" /> Paper rules fill locally in the trade log, no broker contacted</div>
-            <div className="flex items-start gap-2"><AlertTriangle className="w-3 h-3 mt-0.5 shrink-0 text-yellow-400" /> Broker rules are parked by the order-placement kill switch and show up as FAILED until the safety gateway ships</div>
+            <div className="flex items-start gap-2"><RotateCcw className="w-3 h-3 mt-0.5 shrink-0 text-yellow-400" /> A failed rule stays put until you retry it — RETRY re-arms it against the same trigger</div>
+            <div className="flex items-start gap-2"><AlertTriangle className="w-3 h-3 mt-0.5 shrink-0 text-yellow-400" /> Broker rules go through the execution gateway: dry-run unless live mode is on, capped at $1,000 per order</div>
           </div>
         </div>
       </div>
