@@ -202,7 +202,7 @@ export default function RuleBuilder() {
         <div className="p-3 border border-yellow-400/30 bg-yellow-400/5 text-[11px] text-yellow-400 flex items-start gap-2">
           <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
           <span>
-            AI drafting is offline. Set <code className="text-foreground">OPENAI_API_KEY</code> in the API service
+            AI drafting is offline. Set <code className="text-foreground">{(status as { keyEnv?: string } | null)?.keyEnv ?? 'OPENROUTER_API_KEY'}</code> in the API service
             environment to turn it on — you can still build a rule by hand below and save it normally.
           </span>
         </div>

@@ -5,7 +5,10 @@
     "tsBuildInfoFile": ".tsbuildinfo",
     "outDir": "dist",
     "rootDir": "src",
-    "types": ["node"]
+    "types": ["node"],
+    // lib/rule-draft.ts and lib/execution-gateway.ts use explicit .ts specifiers so
+    // scripts/test-rule-builder.mjs can import them with Node's type stripping.
+    "allowImportingTsExtensions": true
   },
   "include": ["src"],
   "references": [

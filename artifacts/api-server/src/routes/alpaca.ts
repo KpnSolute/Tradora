@@ -13,14 +13,17 @@ import { db, tradingAccountsTable } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
 import { AlpacaClient, toAlpacaSymbol } from "../lib/alpaca";
 import { logger } from "../lib/logger";
-import { ORDER_PLACEMENT_QUARANTINE_MESSAGE } from "../lib/order-quarantine";
+import { submitOrderIntent, type Decision } from "../lib/execution-gateway";
 
 const router: IRouter = Router();
 
-function rejectOrderPlacement(res: any, userId: number): boolean {
-  logger.warn({ userId }, ORDER_PLACEMENT_QUARANTINE_MESSAGE);
-  res.status(503).json({ error: ORDER_PLACEMENT_QUARANTINE_MESSAGE });
-  return true;
+function respondBlocked(res: any, decision: Extract<Decision, { outcome: "blocked" }>): void {
+  logger.warn({ userId: decision.audit?.userId, code: decision.code }, decision.message);
+  res.status(decision.httpStatus).json({
+    error: decision.message,
+    code: decision.code,
+    auditId: decision.audit?.id ?? null,
+  });
 }
 
 function requireAuth(req: any, res: any): boolean {
@@ -217,14 +220,13 @@ router.get("/alpaca/orders", async (req, res): Promise<void> => {
   }
 });
 
-// POST /alpaca/orders — place an order
+// POST /alpaca/orders — routed through the execution gateway (dry-run, nothing sent)
 router.post("/alpaca/orders", async (req, res): Promise<void> => {
   if (!requireAuth(req, res)) return;
-  if (rejectOrderPlacement(res, req.session.userId!)) return;
   const client = await getAlpacaClient(req.session.userId!, res);
   if (!client) return;
 
-  const { symbol, qty, notional, side, type = "market", time_in_force = "gtc", limit_price, stop_price } = req.body;
+  const { symbol, qty, notional, side, type = "market", limit_price, referencePrice } = req.body;
 
   if (!symbol || !side) {
     res.status(400).json({ error: "symbol and side are required" });
@@ -234,36 +236,51 @@ router.post("/alpaca/orders", async (req, res): Promise<void> => {
     res.status(400).json({ error: "Either qty or notional is required" });
     return;
   }
-
-  // Convert our symbol format (BTC-USDT) to Alpaca format (BTC/USD)
-  const alpacaSymbol = symbol.includes("/") ? symbol : toAlpacaSymbol(symbol);
-
-  try {
-    const order = await client.placeOrder({
-      symbol:        alpacaSymbol,
-      qty:           qty ? String(qty) : undefined,
-      notional:      notional ? String(notional) : undefined,
-      side,
-      type,
-      time_in_force,
-      limit_price:   limit_price ? String(limit_price) : undefined,
-      stop_price:    stop_price ? String(stop_price) : undefined,
-    });
-
-    logger.info({ symbol: alpacaSymbol, side, qty, notional, orderId: order.id }, "Alpaca order placed");
-    res.status(201).json({
-      id:           order.id,
-      symbol:       order.symbol,
-      side:         order.side,
-      type:         order.type,
-      qty:          parseFloat(order.qty),
-      status:       order.status,
-      submittedAt:  order.submitted_at,
-    });
-  } catch (err: any) {
-    logger.warn({ err }, "Alpaca placeOrder error");
-    res.status(400).json({ error: `Order failed: ${err?.message}` });
+  if (type !== "market" && type !== "limit") {
+    res.status(400).json({ error: "Only market and limit orders are accepted" });
+    return;
   }
+
+  const limitPrice =
+    limit_price !== undefined && limit_price !== null && limit_price !== "" ? parseFloat(String(limit_price)) : undefined;
+  const reference = Number(referencePrice) > 0 ? Number(referencePrice) : undefined;
+  const unitPrice = limitPrice ?? reference;
+  // Alpaca accepts a dollar amount instead of a quantity; convert it so the risk check
+  // has a size. The gateway refuses the order when it cannot be priced at all.
+  const qtyNum = qty ? parseFloat(String(qty)) : unitPrice ? +(Number(notional) / unitPrice).toFixed(8) : NaN;
+
+  const decision = submitOrderIntent({
+    source: "rest:alpaca",
+    userId: req.session.userId!,
+    broker: "alpaca",
+    accountMode: client.mode,
+    localFill: false,
+    symbol,
+    side,
+    type,
+    qty: qtyNum,
+    limitPrice,
+    notional: notional ? Number(notional) : undefined,
+    referencePrice: unitPrice,
+  });
+
+  if (decision.outcome === "blocked") {
+    respondBlocked(res, decision);
+    return;
+  }
+  if (decision.outcome !== "dry_run") {
+    res.status(500).json({ error: "Unexpected execution decision" });
+    return;
+  }
+
+  logger.info({ auditId: decision.audit.id, symbol, side, notional }, decision.message);
+  res.status(202).json({
+    status: "dry_run",
+    message: decision.message,
+    auditId: decision.audit.id,
+    intent: decision.audit,
+    notional: decision.notional,
+  });
 });
 
 // DELETE /alpaca/orders/:orderId — cancel an order

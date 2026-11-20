@@ -7,7 +7,9 @@
     "build": "pnpm run typecheck && pnpm -r --if-present run build",
     "typecheck:libs": "tsc --build",
     "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck",
-    "verify:trading-safety": "node scripts/verify-trading-quarantine.mjs"
+    "verify:trading-safety": "node scripts/verify-trading-quarantine.mjs",
+    "mock:model": "node scripts/mock-model-server.mjs",
+    "test:rule-builder": "node scripts/test-rule-builder.mjs"
   },
   "private": true,
   "dependencies": {

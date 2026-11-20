@@ -16,9 +16,8 @@ import {
 import type { TickerData } from "./market-data";
 import { db, automationsTable, tradesTable, tradingAccountsTable } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
-import { getBrokerClient } from "./broker-factory";
 import { getTicker } from "./market-data";
-import { assertOrderPlacementQuarantined } from "./order-quarantine";
+import { submitOrderIntent } from "./execution-gateway";
 
 // ─── Frontend client subscriptions ───────────────────────────────────────────
 
@@ -64,6 +63,9 @@ async function evaluateAutomations(symbol: string, price: number): Promise<void>
 }
 
 async function fireAutomation(rule: any, currentPrice: number): Promise<void> {
+  let dryRun = false;
+  let intentMessage: string | undefined;
+
   // Mark triggered immediately
   await db
     .update(automationsTable)
@@ -90,12 +92,10 @@ async function fireAutomation(rule: any, currentPrice: number): Promise<void> {
         filledAt: new Date(),
       });
     } else {
-      // Broker execution stays behind the order-placement kill switch: nothing here
-      // reaches a real broker until the canonical safety gateway exists.
-      assertOrderPlacementQuarantined("WebSocket automation execution");
-
-      // Find the user's connected broker account and place the order
-      const rows = await db
+      // Broker-bound rules go through the execution gateway: the intended order is
+      // validated, notional-capped and written to the audit trail. Live execution is
+      // still quarantined, so dry_run is the only outcome that gets this far.
+      const accountRows = await db
         .select()
         .from(tradingAccountsTable)
         .where(
@@ -107,17 +107,27 @@ async function fireAutomation(rule: any, currentPrice: number): Promise<void> {
         )
         .limit(1);
 
-      if (rows.length === 0) throw new Error(`No active ${rule.broker} account`);
+      if (accountRows.length === 0) throw new Error("No active " + rule.broker + " account");
 
-      const accountRow = rows[0];
-      const client = getBrokerClient(accountRow);
-      await client.placeOrder({
+      const decision = submitOrderIntent({
+        source: "automation",
+        userId: rule.userId,
+        broker: rule.broker,
+        accountMode: accountRows[0].mode === "live" ? "live" : "paper",
+        localFill: false,
         symbol: rule.symbol,
         side: rule.side,
-        type: rule.orderType as "market" | "limit",
+        type: rule.orderType === "limit" ? "limit" : "market",
         qty,
         limitPrice,
+        referencePrice: currentPrice,
       });
+
+      if (decision.outcome === "blocked") throw new Error(decision.message);
+      if (decision.outcome === "dry_run") {
+        dryRun = true;
+        intentMessage = decision.message;
+      }
     }
 
     await db
@@ -125,7 +135,7 @@ async function fireAutomation(rule: any, currentPrice: number): Promise<void> {
       .set({ status: "completed" })
       .where(eq(automationsTable.id, rule.id));
 
-    logger.info({ ruleId: rule.id, broker: rule.broker, side: rule.side, qty: rule.quantity }, "Automation completed");
+    logger.info({ ruleId: rule.id, broker: rule.broker, side: rule.side, qty: rule.quantity, dryRun }, "Automation completed");
 
     broadcastToUser(rule.userId, {
       type: "automation_fired",
@@ -136,6 +146,8 @@ async function fireAutomation(rule: any, currentPrice: number): Promise<void> {
       broker: rule.broker,
       triggerPrice: rule.triggerPrice,
       currentPrice,
+      dryRun,
+      intentMessage,
     });
   } catch (err: any) {
     const failureReason: string = err?.message ?? "Unknown error";

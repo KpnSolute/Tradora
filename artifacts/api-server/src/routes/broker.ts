@@ -8,19 +8,22 @@
  * DELETE /broker-accounts/:exchange/orders/:orderId → cancel order
  */
 import { Router, type IRouter } from "express";
-import { db, tradingAccountsTable, tradesTable, usersTable } from "@workspace/db";
+import { db, tradingAccountsTable, tradesTable } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
 import { getBrokerClient } from "../lib/broker-factory";
 import { getTicker } from "../lib/market-data";
 import { logger } from "../lib/logger";
-import { ORDER_PLACEMENT_QUARANTINE_MESSAGE } from "../lib/order-quarantine";
+import { submitOrderIntent, type Decision } from "../lib/execution-gateway";
 
 const router: IRouter = Router();
 
-function rejectOrderPlacement(res: any, userId: number, exchange: string): boolean {
-  logger.warn({ userId, exchange }, ORDER_PLACEMENT_QUARANTINE_MESSAGE);
-  res.status(503).json({ error: ORDER_PLACEMENT_QUARANTINE_MESSAGE });
-  return true;
+function respondBlocked(res: any, decision: Extract<Decision, { outcome: "blocked" }>): void {
+  logger.warn({ userId: decision.audit?.userId, code: decision.code }, decision.message);
+  res.status(decision.httpStatus).json({
+    error: decision.message,
+    code: decision.code,
+    auditId: decision.audit?.id ?? null,
+  });
 }
 
 function requireAuth(req: any, res: any): boolean {
@@ -174,7 +177,6 @@ router.get("/broker-accounts/:exchange/orders", async (req, res): Promise<void> 
 // POST /broker-accounts/:exchange/orders
 router.post("/broker-accounts/:exchange/orders", async (req, res): Promise<void> => {
   if (!requireAuth(req, res)) return;
-  if (rejectOrderPlacement(res, req.session.userId!, req.params.exchange)) return;
   const row = await getAccount(req.session.userId!, req.params.exchange, res);
   if (!row) return;
 
@@ -184,48 +186,73 @@ router.post("/broker-accounts/:exchange/orders", async (req, res): Promise<void>
     return;
   }
 
-  // Paper mode: insert into local trades DB
-  if (row.mode === "paper") {
-    const ticker = await getTicker(symbol).catch(() => null);
-    const price = limitPrice ?? ticker?.price ?? 0;
-    const [user] = await db.select().from(usersTable).where(eq(usersTable.id, req.session.userId!));
-    const [trade] = await db.insert(tradesTable).values({
-      userId: req.session.userId!,
-      symbol,
-      side,
-      quantity: String(qty),
-      price: String(price),
-      total: String(qty * price),
-      status: "filled",
-      mode: "paper",
-      filledAt: new Date(),
-    }).returning();
-    logger.info({ exchange: row.exchange, symbol, side, qty, mode: "paper" }, "Paper order placed via broker");
-    res.status(201).json({
-      id: String(trade.id),
-      symbol: trade.symbol,
-      side: trade.side,
-      type,
-      qty,
-      filledQty: qty,
-      filledAvgPrice: price,
-      status: "filled",
-      limitPrice: limitPrice ?? null,
-      submittedAt: trade.createdAt.toISOString(),
-      filledAt: trade.filledAt?.toISOString() ?? null,
+  const orderType: "market" | "limit" = type === "limit" ? "limit" : "market";
+  const parsedLimit =
+    limitPrice !== undefined && limitPrice !== null && limitPrice !== "" ? parseFloat(String(limitPrice)) : undefined;
+  const ticker = await getTicker(symbol).catch(() => null);
+
+  // Every order — paper fills included — passes the execution gateway, which owns the
+  // kill switch, the notional caps and the audit trail. Broker-bound intents are
+  // dry-run for now, so nothing below this line reaches an exchange.
+  const decision = submitOrderIntent({
+    source: "rest:broker:" + req.params.exchange,
+    userId: req.session.userId!,
+    broker: row.exchange,
+    accountMode: row.mode === "live" ? "live" : "paper",
+    localFill: row.mode === "paper",
+    symbol,
+    side,
+    type: orderType,
+    qty: parseFloat(String(qty)),
+    limitPrice: orderType === "limit" ? parsedLimit : undefined,
+    referencePrice: parsedLimit ?? ticker?.price,
+  });
+
+  if (decision.outcome === "blocked") {
+    respondBlocked(res, decision);
+    return;
+  }
+
+  if (decision.outcome !== "paper_local") {
+    logger.info({ auditId: decision.audit.id, exchange: row.exchange, symbol, side }, decision.message);
+    res.status(202).json({
+      status: "dry_run",
+      message: decision.message,
+      auditId: decision.audit.id,
+      intent: decision.audit,
+      notional: decision.notional,
     });
     return;
   }
 
-  try {
-    const client = getBrokerClient(row);
-    const order = await client.placeOrder({ symbol, side, type, qty: parseFloat(qty), limitPrice });
-    logger.info({ exchange: row.exchange, symbol, side, qty, orderId: order.id }, "Live order placed");
-    res.status(201).json(order);
-  } catch (err: any) {
-    logger.warn({ err, exchange: req.params.exchange }, "Broker placeOrder error");
-    res.status(400).json({ error: `Order failed: ${err?.message}` });
-  }
+  // Paper mode: insert into local trades DB
+  const price = parsedLimit ?? ticker?.price ?? 0;
+  const [trade] = await db.insert(tradesTable).values({
+    userId: req.session.userId!,
+    symbol,
+    side,
+    quantity: String(qty),
+    price: String(price),
+    total: String(qty * price),
+    status: "filled",
+    mode: "paper",
+    filledAt: new Date(),
+  }).returning();
+  logger.info({ exchange: row.exchange, symbol, side, qty, mode: "paper", auditId: decision.audit.id }, "Paper order placed via broker");
+  res.status(201).json({
+    id: String(trade.id),
+    symbol: trade.symbol,
+    side: trade.side,
+    type: orderType,
+    qty,
+    filledQty: qty,
+    filledAvgPrice: price,
+    status: "filled",
+    limitPrice: limitPrice ?? null,
+    submittedAt: trade.createdAt.toISOString(),
+    filledAt: trade.filledAt?.toISOString() ?? null,
+    auditId: decision.audit.id,
+  });
 });
 
 // DELETE /broker-accounts/:exchange/orders/:orderId
