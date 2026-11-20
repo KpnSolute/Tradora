@@ -30,6 +30,7 @@ import { z } from 'zod';
 import { Activity, TrendingUp, TrendingDown, Minus, BarChart2, Zap, X, ChevronDown } from 'lucide-react';
 import { cn, formatPrice, formatNumber } from '@/lib/utils';
 import { TradingChart } from '@/components/trading-chart';
+import { useLiveTicker } from '@/lib/use-live-ticker';
 
 type ChartRange = '1h' | '4h' | '1d' | '7D' | '1M' | 'ALL';
 
@@ -68,7 +69,23 @@ export default function Market() {
   const [range, setRange] = useState<ChartRange>('1h');
   const interval = RANGE_INTERVAL[range];
   
-  const { data: ticker } = useGetMarketTicker(safeSymbol, { query: { queryKey: getGetMarketTickerQueryKey(safeSymbol), refetchInterval: 5000 } });
+  // The REST quote is the 5s snapshot; the WebSocket feed below pushes every
+  // Kraken tick on top of it, so the price moves as the market does.
+  const { data: polledTicker } = useGetMarketTicker(safeSymbol, { query: { queryKey: getGetMarketTickerQueryKey(safeSymbol), refetchInterval: 5000 } });
+  const streamedTicker = useLiveTicker(safeSymbol);
+  const ticker = useMemo(() => {
+    if (!polledTicker) return streamedTicker ?? undefined;
+    if (!streamedTicker || streamedTicker.symbol !== safeSymbol) return polledTicker;
+    return {
+      ...polledTicker,
+      price: streamedTicker.price,
+      change24h: streamedTicker.change24h,
+      changePct24h: streamedTicker.changePct24h,
+      high24h: streamedTicker.high24h,
+      low24h: streamedTicker.low24h,
+      volume24h: streamedTicker.volume24h,
+    };
+  }, [polledTicker, streamedTicker, safeSymbol]);
   const { data: candles, isError: candlesError, refetch: refetchCandles } = useGetMarketCandles(safeSymbol, interval, { query: { queryKey: getGetMarketCandlesQueryKey(safeSymbol, interval), refetchInterval: 30000, retry: 1 } });
   const { data: signals } = useGetMarketSignals(safeSymbol, { query: { queryKey: getGetMarketSignalsQueryKey(safeSymbol), refetchInterval: 60000 } });
   

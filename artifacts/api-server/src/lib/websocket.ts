@@ -266,6 +266,7 @@ function broadcastTicker(ticker: TickerData): void {
     high24h:      ticker.high24h,
     low24h:       ticker.low24h,
     volume24h:    ticker.volume24h,
+    updatedAt:    ticker.updatedAt,
   });
   for (const client of clients) {
     if (client.ws.readyState !== WebSocket.OPEN) continue;
@@ -285,6 +286,7 @@ async function sendInitialTickers(client: SubscribedClient): Promise<void> {
         type: "ticker", symbol: ticker.symbol, price: ticker.price,
         change24h: ticker.change24h, changePct24h: ticker.changePct24h,
         high24h: ticker.high24h, low24h: ticker.low24h, volume24h: ticker.volume24h,
+        updatedAt: ticker.updatedAt,
       }));
     } catch { /* ignore */ }
   }
