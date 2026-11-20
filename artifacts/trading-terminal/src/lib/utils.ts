@@ -5,13 +5,20 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
-export function formatPrice(price: number, maximumSignificantDigits = 2) {
+/**
+ * Currency formatter. `fractionDigits` is the maximum number of decimals to show
+ * (2 by default, more for sub-dollar coins), with at least two so a live quote
+ * visibly ticks in cents. It used to interpret that argument as *significant*
+ * digits, which rendered a $62,418.30 BTC quote as "$62,418" — frozen to the eye
+ * even while the feed was updating every few seconds.
+ */
+export function formatPrice(price: number, fractionDigits = 2) {
+  const max = Math.min(Math.max(Math.trunc(fractionDigits), 0), 8);
   return new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: "USD",
-    maximumSignificantDigits: maximumSignificantDigits > 0 ? maximumSignificantDigits : undefined,
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
+    minimumFractionDigits: Math.min(max, 2),
+    maximumFractionDigits: max,
   }).format(price);
 }
 
