@@ -7,6 +7,7 @@ import { validateCoinbaseKeys } from "../lib/coinbase";
 import { validateBinanceKeys } from "../lib/binance";
 import { validateKrakenPrivateKeys } from "../lib/kraken-private";
 import { validateBybitKeys } from "../lib/bybit";
+import { normalizeCredential } from "../lib/credentials";
 import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
@@ -52,8 +53,15 @@ router.post("/accounts", async (req, res): Promise<void> => {
     return;
   }
 
-  const { exchange, label, apiKey, apiSecret } = parsed.data;
+  const { exchange, label } = parsed.data;
+  const apiKey = normalizeCredential(parsed.data.apiKey, exchange);
+  const apiSecret = normalizeCredential(parsed.data.apiSecret, exchange);
   const mode = (req.body.mode === "live" ? "live" : "paper") as "paper" | "live";
+
+  if (!apiKey || !apiSecret) {
+    res.status(400).json({ error: "API key and secret are required" });
+    return;
+  }
 
   let balance: string | null = null;
   let status = "active";
@@ -91,7 +99,14 @@ router.post("/accounts", async (req, res): Promise<void> => {
     }
   } catch (err: any) {
     logger.warn({ err, exchange }, "Broker key validation failed");
-    res.status(400).json({ error: `Invalid ${exchange} credentials: ${err?.message ?? "check your API key and secret"}` });
+    const message = err?.message ?? "check your API key and secret";
+    // Alpaca answers a bad pair, a paper key on the live host, and a truncated secret
+    // with the same bare 401, so spell out what to check rather than echoing it back.
+    const hint =
+      exchange === "alpaca" && message.includes("Alpaca 401")
+        ? " (Alpaca rejected this key pair — copy the whole secret from the dashboard, and note that PK… keys are paper-only while AK… keys are live-only.)"
+        : "";
+    res.status(400).json({ error: `Invalid ${exchange} credentials: ${message}${hint}` });
     return;
   }
 

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -6,6 +6,7 @@ import { useLogin, getGetMeQueryKey } from '@workspace/api-client-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Link, useLocation } from 'wouter';
 import { Activity } from 'lucide-react';
+import { useAuth } from '@/lib/auth';
 
 const loginSchema = z.object({
   username: z.string().min(3, 'Username must be at least 3 characters'),
@@ -18,6 +19,14 @@ export default function Login() {
   const [, setLocation] = useLocation();
   const queryClient = useQueryClient();
   const login = useLogin();
+  const { isAuthenticated } = useAuth();
+
+  // An authenticated operator never belongs on the login screen. This also
+  // completes the redirect when the session arrived from another tab or the
+  // mutation's onSuccess callback never ran (a rejected/stale promise).
+  useEffect(() => {
+    if (isAuthenticated) setLocation('/dashboard');
+  }, [isAuthenticated, setLocation]);
 
   const { register, handleSubmit, formState: { errors } } = useForm<LoginForm>({
     resolver: zodResolver(loginSchema),
@@ -70,7 +79,7 @@ export default function Login() {
 
           {login.error && (
             <div className="p-3 border border-down/50 bg-down/10 text-down text-sm">
-              {login.error.error || 'Authentication failed'}
+              {login.error.data?.error || 'Authentication failed'}
             </div>
           )}
 

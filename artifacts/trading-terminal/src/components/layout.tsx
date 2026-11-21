@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Link, useLocation } from 'wouter';
 import { useLogout, useListAccounts, getGetMeQueryKey } from '@workspace/api-client-react';
 import { useQueryClient } from '@tanstack/react-query';
-import { LayoutDashboard, LineChart, History, PieChart, Wallet, Settings, LogOut, Activity, Zap, Bot } from 'lucide-react';
+import { LayoutDashboard, LineChart, History, PieChart, Wallet, Settings, LogOut, Activity, Zap, Bot, Sparkles, Wand2 } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/utils';
 
@@ -37,7 +37,9 @@ export function Layout({ children }: { children: React.ReactNode }) {
   };
 
   const navItems = [
+    { href: '/agent-feed',      label: 'Agent Feed',         icon: Sparkles },
     { href: '/automations',     label: 'Automations',        icon: Bot },
+    { href: '/rule-builder',    label: 'Rule Builder',       icon: Wand2 },
     { href: '/dashboard',      label: 'Terminal',           icon: LayoutDashboard },
     { href: '/market/BTC-USDT',label: 'Markets',            icon: LineChart },
     { href: '/portfolio',      label: 'Portfolio',          icon: PieChart },

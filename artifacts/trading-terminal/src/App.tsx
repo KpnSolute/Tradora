@@ -15,6 +15,8 @@ import Trades from '@/pages/trades';
 import Portfolio from '@/pages/portfolio';
 import Accounts from '@/pages/accounts';
 import Automations from '@/pages/automations';
+import RuleBuilder from '@/pages/rule-builder';
+import AgentFeed from '@/pages/agent-feed';
 import Settings from '@/pages/settings';
 import NotFound from '@/pages/not-found';
 
@@ -54,6 +56,8 @@ function ProtectedArea() {
         <Route path="/portfolio" component={Portfolio} />
         <Route path="/accounts" component={Accounts} />
         <Route path="/automations" component={Automations} />
+        <Route path="/rule-builder" component={RuleBuilder} />
+        <Route path="/agent-feed" component={AgentFeed} />
         <Route path="/settings" component={Settings} />
         <Route component={NotFound} />
       </Switch>

@@ -1,5 +1,5 @@
 import { logger } from "./logger";
-import { assertOrderPlacementQuarantined } from "./order-quarantine";
+import { assertLiveBrokerAccount } from "./order-quarantine";
 
 const PAPER_BASE = "https://paper-api.alpaca.markets";
 const LIVE_BASE = "https://api.alpaca.markets";
@@ -62,6 +62,16 @@ export interface AlpacaOrder {
   extended_hours: boolean;
 }
 
+export interface AlpacaPortfolioHistory {
+  timestamp: number[];
+  equity: (number | null)[];
+  profit_loss: (number | null)[];
+  profit_loss_pct: (number | null)[];
+  base_value: number;
+  base_value_asof?: string;
+  timeframe: string;
+}
+
 export interface AlpacaOrderInput {
   symbol: string;         // e.g. "BTC/USD"
   qty?: string;           // quantity in asset units
@@ -120,9 +130,23 @@ export class AlpacaClient {
     return this.request<AlpacaOrder[]>(`/v2/orders?status=all&limit=${limit}&direction=desc`);
   }
 
+  /** Equity timeseries for the account's equity curve (1D…1Y). */
+  async getPortfolioHistory(
+    period = "1D",
+    timeframe = "5Min",
+    intradayReporting?: "market_hours" | "continuous",
+  ): Promise<AlpacaPortfolioHistory> {
+    const params = new URLSearchParams({ period, timeframe });
+    if (intradayReporting) params.set("intraday_reporting", intradayReporting);
+    return this.request<AlpacaPortfolioHistory>(`/v2/account/portfolio/history?${params.toString()}`);
+  }
+
   async placeOrder(order: AlpacaOrderInput): Promise<AlpacaOrder> {
-    void order;
-    assertOrderPlacementQuarantined("AlpacaClient.placeOrder");
+    assertLiveBrokerAccount("AlpacaClient.placeOrder", this.mode);
+    return this.request<AlpacaOrder>("/v2/orders", {
+      method: "POST",
+      body: JSON.stringify(order),
+    });
   }
 
   async cancelOrder(orderId: string): Promise<void> {

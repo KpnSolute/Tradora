@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -6,6 +6,7 @@ import { useRegister, getGetMeQueryKey } from '@workspace/api-client-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Link, useLocation } from 'wouter';
 import { Activity } from 'lucide-react';
+import { useAuth } from '@/lib/auth';
 
 const registerSchema = z.object({
   username: z.string().min(3, 'Username must be at least 3 characters'),
@@ -18,6 +19,12 @@ export default function Register() {
   const [, setLocation] = useLocation();
   const queryClient = useQueryClient();
   const registerMutation = useRegister();
+  const { isAuthenticated } = useAuth();
+
+  // Same guard as the login screen: a signed-in operator goes straight in.
+  useEffect(() => {
+    if (isAuthenticated) setLocation('/dashboard');
+  }, [isAuthenticated, setLocation]);
 
   const { register, handleSubmit, formState: { errors } } = useForm<RegisterForm>({
     resolver: zodResolver(registerSchema),
@@ -69,7 +76,7 @@ export default function Register() {
 
           {registerMutation.error && (
             <div className="p-3 border border-down/50 bg-down/10 text-down text-sm">
-              {registerMutation.error.error || 'Registration failed'}
+              {registerMutation.error.data?.error || 'Registration failed'}
             </div>
           )}
 

@@ -4,10 +4,15 @@ import {
   useGetMarketTicker, 
   useGetMarketCandles, 
   useGetMarketSignals,
+  useListAlpacaPositions,
+  useListAlpacaOrders,
   useCreateTrade,
   usePlaceAlpacaOrder,
   usePlaceBrokerOrder,
   useListAccounts,
+  getGetMarketTickerQueryKey,
+  getGetMarketCandlesQueryKey,
+  getGetMarketSignalsQueryKey,
   getListTradesQueryKey,
   getGetPortfolioSummaryQueryKey,
   getListPositionsQueryKey,
@@ -24,9 +29,19 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { Activity, TrendingUp, TrendingDown, Minus, BarChart2, Zap, X, ChevronDown } from 'lucide-react';
 import { cn, formatPrice, formatNumber } from '@/lib/utils';
-import { ComposedChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
+import { TradingChart } from '@/components/trading-chart';
+import { useLiveTicker } from '@/lib/use-live-ticker';
 
-type Interval = '1m' | '5m' | '15m' | '1h' | '4h' | '1d';
+type ChartRange = '1h' | '4h' | '1d' | '7D' | '1M' | 'ALL';
+
+/** fomo-style range pills: the long ranges come from the daily series. */
+const CHART_RANGES: ChartRange[] = ['1h', '4h', '1d', '7D', '1M', 'ALL'];
+const RANGE_INTERVAL: Record<ChartRange, '1h' | '4h' | '1d'> = {
+  '1h': '1h', '4h': '4h', '1d': '1d', '7D': '1d', '1M': '1d', 'ALL': '1d',
+};
+const RANGE_BARS: Record<ChartRange, number> = {
+  '1h': 0, '4h': 0, '1d': 0, '7D': 7, '1M': 30, 'ALL': 0,
+};
 
 const tradeSchema = z.object({
   quantity: z.coerce.number().positive('Quantity must be positive'),
@@ -46,41 +61,33 @@ function useOrderBookSizes(seed: number) {
   }, [seed]);
 }
 
-// ─── Proper candlestick shape with wicks ────────────────────────────────────
-const CandlestickShape = (props: any) => {
-  const { x, y, width, height, payload } = props;
-  const { open, high, low, close, isUp } = payload;
-  const color  = isUp ? 'hsl(var(--up))' : 'hsl(var(--down))';
-  const range  = high - low;
-  if (range === 0 || height === 0) return null;
-
-  // y = top pixel (high), y+height = bottom pixel (low)
-  const bodyTop    = y + ((high - Math.max(open, close)) / range) * height;
-  const bodyBottom = y + ((high - Math.min(open, close)) / range) * height;
-  const bodyH      = Math.max(bodyBottom - bodyTop, 1);
-  const cx         = x + width / 2;
-  const bodyW      = Math.max(width - 2, 2);
-
-  return (
-    <g>
-      {/* Wick */}
-      <line x1={cx} y1={y} x2={cx} y2={y + height} stroke={color} strokeWidth={1} />
-      {/* Body */}
-      <rect x={cx - bodyW / 2} y={bodyTop} width={bodyW} height={bodyH} fill={color} />
-    </g>
-  );
-};
-
 export default function Market() {
   const { symbol } = useParams();
   const safeSymbol = symbol ? decodeURIComponent(symbol).toUpperCase() : 'BTC-USDT';
   
   const queryClient = useQueryClient();
-  const [interval, setIntervalState] = useState<Interval>('1h');
+  const [range, setRange] = useState<ChartRange>('1h');
+  const interval = RANGE_INTERVAL[range];
   
-  const { data: ticker } = useGetMarketTicker(safeSymbol, { query: { refetchInterval: 5000 } });
-  const { data: candles } = useGetMarketCandles(safeSymbol, interval, { query: { refetchInterval: 30000 } });
-  const { data: signals } = useGetMarketSignals(safeSymbol, { query: { refetchInterval: 60000 } });
+  // The REST quote is the 5s snapshot; the WebSocket feed below pushes every
+  // Kraken tick on top of it, so the price moves as the market does.
+  const { data: polledTicker } = useGetMarketTicker(safeSymbol, { query: { queryKey: getGetMarketTickerQueryKey(safeSymbol), refetchInterval: 5000 } });
+  const streamedTicker = useLiveTicker(safeSymbol);
+  const ticker = useMemo(() => {
+    if (!polledTicker) return streamedTicker ?? undefined;
+    if (!streamedTicker || streamedTicker.symbol !== safeSymbol) return polledTicker;
+    return {
+      ...polledTicker,
+      price: streamedTicker.price,
+      change24h: streamedTicker.change24h,
+      changePct24h: streamedTicker.changePct24h,
+      high24h: streamedTicker.high24h,
+      low24h: streamedTicker.low24h,
+      volume24h: streamedTicker.volume24h,
+    };
+  }, [polledTicker, streamedTicker, safeSymbol]);
+  const { data: candles, isError: candlesError, refetch: refetchCandles } = useGetMarketCandles(safeSymbol, interval, { query: { queryKey: getGetMarketCandlesQueryKey(safeSymbol, interval), refetchInterval: 30000, retry: 1 } });
+  const { data: signals } = useGetMarketSignals(safeSymbol, { query: { queryKey: getGetMarketSignalsQueryKey(safeSymbol), refetchInterval: 60000 } });
   
   const createTrade = useCreateTrade();
   const placeAlpaca = usePlaceAlpacaOrder();
@@ -205,16 +212,34 @@ export default function Market() {
   const obSeed = useMemo(() => Math.floor((ticker?.price || 1000) / 10), [ticker?.price]);
   const obSizes = useOrderBookSizes(obSeed);
 
-  // Chart data with wickRange for proper candlesticks
-  const chartData = useMemo(() => {
-    if (!candles) return [];
-    return candles.map(c => ({
-      ...c,
-      dateStr:   new Date(c.time * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      isUp:      c.close >= c.open,
-      wickRange: [c.low, c.high] as [number, number],
-    }));
-  }, [candles]);
+  // Long ranges are windowed from the daily series.
+  const rangeCandles = useMemo(() => {
+    if (!candles?.length) return [];
+    const bars = RANGE_BARS[range];
+    return bars > 0 ? candles.slice(-bars) : candles;
+  }, [candles, range]);
+
+  // Position entry + fills for this symbol, drawn onto the chart.
+  const { data: alpacaPositions } = useListAlpacaPositions({
+    query: { queryKey: getListAlpacaPositionsQueryKey(), enabled: !!alpacaAccount },
+  });
+  const { data: alpacaOrders } = useListAlpacaOrders(undefined, {
+    query: { queryKey: getListAlpacaOrdersQueryKey(), enabled: !!alpacaAccount },
+  });
+  const baseAsset = safeSymbol.split('-')[0];
+
+  const avgEntry = useMemo(() => {
+    const p = alpacaPositions?.find(x => String(x.symbol).split('/')[0].split('-')[0] === baseAsset);
+    return p ? Number(p.avgEntryPrice) : null;
+  }, [alpacaPositions, baseAsset]);
+
+  const tradeMarkers = useMemo(() => (alpacaOrders ?? [])
+    .filter(o => String(o.symbol).split('/')[0].split('-')[0] === baseAsset)
+    .map(o => ({
+      time: Math.floor(new Date(o.submittedAt as unknown as string).getTime() / 1000),
+      side: (o.side === 'buy' ? 'buy' : 'sell') as 'buy' | 'sell',
+    }))
+    .filter(m => isFinite(m.time)), [alpacaOrders, baseAsset]);
 
   // Quantity quick-fill from buying power
   const buyingPower = usingAlpaca ? null : null; // Alpaca buying power not wired here yet
@@ -290,83 +315,34 @@ export default function Market() {
         {/* Chart View */}
         <div className="flex-1 min-h-[400px] border border-border bg-card flex flex-col">
           <div className="flex items-center gap-1 p-2 border-b border-border bg-muted/20">
-            {(['1m', '5m', '15m', '1h', '4h', '1d'] as Interval[]).map(inv => (
+            {CHART_RANGES.map(r => (
               <button
-                key={inv}
-                onClick={() => setIntervalState(inv)}
+                key={r}
+                onClick={() => setRange(r)}
                 className={cn(
                   "px-3 py-1 text-xs font-bold transition-colors",
-                  interval === inv ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                  range === r ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"
                 )}
               >
-                {inv.toUpperCase()}
+                {r.toUpperCase()}
               </button>
             ))}
+            <span className="ml-auto px-2 text-[10px] tracking-widest text-muted-foreground">
+              {interval.toUpperCase()} CANDLES
+            </span>
           </div>
           
-          <div className="flex-1 p-4">
-            {chartData.length > 0 ? (
-              <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
-                  <XAxis 
-                    dataKey="dateStr" 
-                    stroke="hsl(var(--muted-foreground))" 
-                    fontSize={10} 
-                    tickLine={false}
-                    axisLine={false}
-                    minTickGap={40}
-                  />
-                  <YAxis 
-                    domain={['auto', 'auto']} 
-                    stroke="hsl(var(--muted-foreground))" 
-                    fontSize={10}
-                    tickFormatter={(val) => {
-                      if (val >= 1000) return val.toFixed(0);
-                      if (val >= 1)    return val.toFixed(2);
-                      return val.toFixed(4);
-                    }}
-                    tickLine={false}
-                    axisLine={false}
-                    orientation="right"
-                  />
-                  <Tooltip 
-                    contentStyle={{ backgroundColor: 'hsl(var(--card))', borderColor: 'hsl(var(--border))', borderRadius: 0, fontSize: 11 }}
-                    itemStyle={{ color: 'hsl(var(--foreground))' }}
-                    labelStyle={{ color: 'hsl(var(--muted-foreground))', marginBottom: '4px' }}
-                    formatter={(value: any, name: string) => {
-                      if (name === 'wickRange') return null;
-                      return [value, name];
-                    }}
-                    content={({ active, payload }) => {
-                      if (!active || !payload?.length) return null;
-                      const d = payload[0]?.payload;
-                      if (!d) return null;
-                      return (
-                        <div className="border border-border bg-card p-3 text-[10px] font-mono">
-                          <div className="text-muted-foreground mb-2">{d.dateStr}</div>
-                          <div className="grid grid-cols-2 gap-x-4 gap-y-1">
-                            <span className="text-muted-foreground">OPEN</span>  <span className={d.isUp ? 'text-up' : 'text-down'}>{formatPrice(d.open, 4)}</span>
-                            <span className="text-muted-foreground">HIGH</span>  <span className="text-up">{formatPrice(d.high, 4)}</span>
-                            <span className="text-muted-foreground">LOW</span>   <span className="text-down">{formatPrice(d.low, 4)}</span>
-                            <span className="text-muted-foreground">CLOSE</span> <span className={d.isUp ? 'text-up' : 'text-down'}>{formatPrice(d.close, 4)}</span>
-                            <span className="text-muted-foreground">VOL</span>   <span>{formatNumber(d.volume)}</span>
-                          </div>
-                        </div>
-                      );
-                    }}
-                  />
-                  <Bar dataKey="wickRange" shape={<CandlestickShape />} isAnimationActive={false}>
-                    {chartData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={entry.isUp ? 'hsl(var(--up))' : 'hsl(var(--down))'} />
-                    ))}
-                  </Bar>
-                </ComposedChart>
-              </ResponsiveContainer>
-            ) : (
-              <div className="w-full h-full flex items-center justify-center text-muted-foreground text-sm">
-                LOADING CHART DATA...
-              </div>
-            )}
+          <div className="flex-1 p-2">
+            <TradingChart
+              candles={rangeCandles}
+              height={420}
+              avgEntry={avgEntry}
+              markers={tradeMarkers}
+              livePrice={ticker?.price ?? null}
+              loading={!candles && !candlesError}
+              error={candlesError ? 'Could not load candles from the market data feed.' : null}
+              onRetry={() => refetchCandles()}
+            />
           </div>
         </div>
       </div>

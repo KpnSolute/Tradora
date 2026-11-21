@@ -12,20 +12,47 @@ export class StrategyEngineError extends Error {
   }
 }
 
-async function requestStrategyEngine<T>(path: string): Promise<T> {
+interface StrategyEngineRequestInit {
+  method?: "GET" | "POST";
+  body?: unknown;
+}
+
+async function requestStrategyEngine<T>(
+  path: string,
+  init: StrategyEngineRequestInit = {},
+): Promise<T> {
   const token = process.env.STRATEGY_ENGINE_API_ACCESS_TOKEN;
   if (!token) {
     throw new StrategyEngineError("Strategy engine is not configured", 503);
   }
 
-  const baseUrl = process.env.STRATEGY_ENGINE_BASE_URL ?? DEFAULT_BASE_URL;
-  const url = new URL(path, `${baseUrl.replace(/\/$/, "")}/`);
+  // The base URL may carry a path prefix (`https://tradora.kpnsolute.com/engine`),
+  // so append the path instead of resolving it: `new URL("/health", base)` would
+  // resolve against the origin and silently drop `/engine`.
+  const baseUrl = (process.env.STRATEGY_ENGINE_BASE_URL ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
+  const url = new URL(`${baseUrl}${path.startsWith("/") ? path : `/${path}`}`);
+
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${token}`,
+  };
+  // Optional Cloudflare Access service token. When the engine is protected by a
+  // Zero Trust application, Cloudflare rejects every request that does not carry
+  // these headers before it ever reaches Render.
+  const accessClientId = process.env.CF_ACCESS_CLIENT_ID;
+  const accessClientSecret = process.env.CF_ACCESS_CLIENT_SECRET;
+  if (accessClientId && accessClientSecret) {
+    headers["CF-Access-Client-Id"] = accessClientId;
+    headers["CF-Access-Client-Secret"] = accessClientSecret;
+  }
+  if (init.body !== undefined) headers["Content-Type"] = "application/json";
 
   let response: Response;
   try {
     response = await fetch(url, {
-      headers: { Authorization: `Bearer ${token}` },
-      signal: AbortSignal.timeout(5_000),
+      method: init.method ?? "GET",
+      headers,
+      body: init.body === undefined ? undefined : JSON.stringify(init.body),
+      signal: AbortSignal.timeout(30_000),
     });
   } catch (error) {
     logger.warn({ err: error, path }, "Strategy engine request failed");
@@ -65,4 +92,62 @@ export function getStrategies(): Promise<{ strategies: StrategySummary[] }> {
   return requestStrategyEngine<{ strategies: StrategySummary[] }>(
     "/strategies",
   );
+}
+
+/** OHLCV bar forwarded to the engine in the exact shape it expects. */
+export interface AnalystBar {
+  symbol: string;
+  asset_class: "stocks" | "crypto";
+  timestamp: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+/** Raw engine payload (snake_case) — mapped into the DB row by the route. */
+export interface AnalystIntent {
+  intent_id: string;
+  symbol: string;
+  asset_class: string;
+  side: "buy" | "sell";
+  quantity: number;
+  order_type: string;
+  reference_price: number;
+  stop_loss: number;
+  take_profit: number;
+  confidence: number;
+  thesis: string;
+  strategy_name: string;
+  strategy_version: string;
+  mode: string;
+  generated_at: string;
+  indicators: Record<string, number>;
+}
+
+export interface AnalystResponse {
+  intent: AnalystIntent | null;
+  note: string;
+  strategy: { name: string; version: string };
+}
+
+/**
+ * Ask the analyst for a proposal. `mode` is pinned to "paper": the engine has no
+ * order-submission endpoint, and V1 only permits analysis, dry_run and paper.
+ */
+export type AnalystTimeframe = "15m" | "1h" | "4h" | "1d";
+
+export function generateTradeIntent(payload: {
+  symbol: string;
+  asset_class: "stocks" | "crypto";
+  bars: AnalystBar[];
+  mode: "paper";
+  timeframe: AnalystTimeframe;
+  equity: number;
+}): Promise<AnalystResponse> {
+  return requestStrategyEngine<AnalystResponse>("/api/v1/analyst/intents", {
+    method: "POST",
+    body: payload,
+  });
 }

@@ -368,6 +368,108 @@ export interface AlpacaOrderInput {
   stop_price?: number;
 }
 
+export type TradeIntentSide = typeof TradeIntentSide[keyof typeof TradeIntentSide];
+
+
+export const TradeIntentSide = {
+  buy: 'buy',
+  sell: 'sell',
+} as const;
+
+export type TradeIntentOrderType = typeof TradeIntentOrderType[keyof typeof TradeIntentOrderType];
+
+
+export const TradeIntentOrderType = {
+  market: 'market',
+} as const;
+
+/**
+ * Bar interval the thesis was computed from
+ */
+export type TradeIntentTimeframe = typeof TradeIntentTimeframe[keyof typeof TradeIntentTimeframe];
+
+
+export const TradeIntentTimeframe = {
+  '15m': '15m',
+  '1h': '1h',
+  '4h': '4h',
+  '1d': '1d',
+} as const;
+
+export type TradeIntentStatus = typeof TradeIntentStatus[keyof typeof TradeIntentStatus];
+
+
+export const TradeIntentStatus = {
+  pending: 'pending',
+  approved: 'approved',
+  rejected: 'rejected',
+} as const;
+
+export type TradeIntentMode = typeof TradeIntentMode[keyof typeof TradeIntentMode];
+
+
+export const TradeIntentMode = {
+  paper: 'paper',
+} as const;
+
+export interface TradeIntent {
+  id: number;
+  userId: number;
+  symbol: string;
+  side: TradeIntentSide;
+  quantity: number;
+  orderType: TradeIntentOrderType;
+  referencePrice: number;
+  stopLoss: number;
+  takeProfit: number;
+  confidence: number;
+  thesis: string;
+  strategyName: string;
+  /** Bar interval the thesis was computed from */
+  timeframe: TradeIntentTimeframe;
+  status: TradeIntentStatus;
+  mode: TradeIntentMode;
+  /** @nullable */
+  decisionNote?: string | null;
+  /** @nullable */
+  decidedAt?: string | null;
+  /** @nullable */
+  tradeId?: number | null;
+  /** @nullable */
+  expiresAt?: string | null;
+  createdAt: string;
+}
+
+/**
+ * Bar interval to analyse; defaults to 1h
+ */
+export type TradeIntentRequestTimeframe = typeof TradeIntentRequestTimeframe[keyof typeof TradeIntentRequestTimeframe];
+
+
+export const TradeIntentRequestTimeframe = {
+  '15m': '15m',
+  '1h': '1h',
+  '4h': '4h',
+  '1d': '1d',
+} as const;
+
+export interface TradeIntentRequest {
+  /** One of the symbols served by the markets endpoint */
+  symbol: string;
+  /** Bar interval to analyse; defaults to 1h */
+  timeframe?: TradeIntentRequestTimeframe;
+}
+
+export interface TradeIntentGeneration {
+  intent?: TradeIntent | null;
+  note: string;
+}
+
+export interface TradeIntentRejection {
+  /** @maxLength 500 */
+  reason?: string;
+}
+
 export type TradingModeInputMode = typeof TradingModeInputMode[keyof typeof TradingModeInputMode];
 
 

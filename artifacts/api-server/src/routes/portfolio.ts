@@ -185,8 +185,10 @@ router.get("/portfolio/unified", async (req, res): Promise<void> => {
           unrealizedPlPct: number;
         }> = [];
 
-        if (account.mode === "paper") {
-          // Paper account: aggregate from local trades DB
+        if (account.exchange === "paper") {
+          // Local simulated account: aggregate from local trades DB.
+          // Connected brokers are queried for real balances even in paper mode
+          // (an Alpaca paper key has its own real paper equity at Alpaca).
           equity = account.balance ? parseFloat(account.balance) : 0;
           const trades = await db
             .select()

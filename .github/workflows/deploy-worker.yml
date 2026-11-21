@@ -1,0 +1,85 @@
+name: Deploy Tradora edge Worker
+
+# Production deploys only from the approved branch, or an explicit manual run.
+# Pull-request runs are intentionally absent: the live hostname serves real users.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "cloudflare/**"
+      - ".github/workflows/deploy-worker.yml"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Validate the bundle without deploying"
+        type: boolean
+        default: false
+
+# Never let two deploys of the same Worker race and overwrite one another.
+concurrency:
+  group: tradora-edge-worker-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: wrangler deploy
+    runs-on: ubuntu-latest
+    environment: production
+    defaults:
+      run:
+        working-directory: cloudflare
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for the required secrets
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          missing=0
+          [ -n "$CLOUDFLARE_API_TOKEN" ] || { echo "::error::CLOUDFLARE_API_TOKEN is not set"; missing=1; }
+          [ -n "$CLOUDFLARE_ACCOUNT_ID" ] || { echo "::error::CLOUDFLARE_ACCOUNT_ID is not set"; missing=1; }
+          exit $missing
+
+      # CLOUDFLARE_ZONE_ID is not needed: the route uses zone_name, which Wrangler
+      # resolves against the token. Add it only if you switch to a zone_id route.
+
+      - name: Dry run
+        if: ${{ inputs.dry_run }}
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: cloudflare
+          command: deploy --dry-run --outdir=dist
+
+      - name: Deploy
+        if: ${{ !inputs.dry_run }}
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: cloudflare
+          command: deploy
+
+      # A deploy is only finished when the live hostname still answers, so check it
+      # from the runner rather than trusting the upload alone.
+      - name: Smoke test the public hostname
+        if: ${{ !inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          base=https://tradora.kpnsolute.com
+          home=$(curl -sS -o /dev/null -w '%{http_code}' "$base/")
+          health=$(curl -sS -o /dev/null -w '%{http_code}' "$base/api/healthz")
+          echo "GET /            -> $home"
+          echo "GET /api/healthz -> $health"
+          test "$home" = "200"
+          test "$health" = "200"
+          # Authenticated endpoints must never be cacheable at the edge. Capture the
+          # headers first: piping curl into `grep -q` lets grep exit early and turn a
+          # pass into a SIGPIPE failure.
+          headers=$(curl -sSI "$base/api/auth/me")
+          echo "$headers" | grep -qi '^cache-control: no-store'

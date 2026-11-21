@@ -22,8 +22,8 @@ if (process.env.EXPO_PUBLIC_DOMAIN) {
 }
 
 // Patch global fetch to include credentials for cookie-based sessions
-const _nativeFetch = global.fetch;
-global.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+const _nativeFetch = globalThis.fetch;
+globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
   return _nativeFetch(input, { credentials: 'include', ...init });
 };
 

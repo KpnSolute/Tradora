@@ -44,6 +44,10 @@ import type {
   Position,
   Trade,
   TradeInput,
+  TradeIntent,
+  TradeIntentGeneration,
+  TradeIntentRejection,
+  TradeIntentRequest,
   TradingAccount,
   TradingModeInput,
   UnifiedPortfolio,
@@ -2702,6 +2706,297 @@ export const useDeleteAutomation = <TError = ErrorType<ErrorResponse>,
         TContext
       > => {
       return useMutation(getDeleteAutomationMutationOptions(options));
+    }
+
+export const getListTradeIntentsUrl = () => {
+
+
+
+
+  return `/api/agent-feed`
+}
+
+/**
+ * @summary List trade intents from the analyst
+ */
+export const listTradeIntents = async ( options?: RequestInit): Promise<TradeIntent[]> => {
+
+  return customFetch<TradeIntent[]>(getListTradeIntentsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListTradeIntentsQueryKey = () => {
+    return [
+    `/api/agent-feed`
+    ] as const;
+    }
+
+
+export const getListTradeIntentsQueryOptions = <TData = Awaited<ReturnType<typeof listTradeIntents>>, TError = ErrorType<ErrorResponse>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listTradeIntents>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListTradeIntentsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listTradeIntents>>> = ({ signal }) => listTradeIntents({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listTradeIntents>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListTradeIntentsQueryResult = NonNullable<Awaited<ReturnType<typeof listTradeIntents>>>
+export type ListTradeIntentsQueryError = ErrorType<ErrorResponse>
+
+
+/**
+ * @summary List trade intents from the analyst
+ */
+
+export function useListTradeIntents<TData = Awaited<ReturnType<typeof listTradeIntents>>, TError = ErrorType<ErrorResponse>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listTradeIntents>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListTradeIntentsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGenerateTradeIntentUrl = () => {
+
+
+
+
+  return `/api/agent-feed/generate`
+}
+
+/**
+ * @summary Ask the analyst for a paper trade intent
+ */
+export const generateTradeIntent = async (tradeIntentRequest: TradeIntentRequest, options?: RequestInit): Promise<TradeIntentGeneration> => {
+
+  return customFetch<TradeIntentGeneration>(getGenerateTradeIntentUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(tradeIntentRequest)
+  }
+);}
+
+
+
+
+
+export const getGenerateTradeIntentMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof generateTradeIntent>>, TError,{data: BodyType<TradeIntentRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof generateTradeIntent>>, TError,{data: BodyType<TradeIntentRequest>}, TContext> => {
+
+const mutationKey = ['generateTradeIntent'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof generateTradeIntent>>, {data: BodyType<TradeIntentRequest>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  generateTradeIntent(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type GenerateTradeIntentMutationResult = NonNullable<Awaited<ReturnType<typeof generateTradeIntent>>>
+    export type GenerateTradeIntentMutationBody = BodyType<TradeIntentRequest>
+    export type GenerateTradeIntentMutationError = ErrorType<ErrorResponse>
+
+    /**
+ * @summary Ask the analyst for a paper trade intent
+ */
+export const useGenerateTradeIntent = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof generateTradeIntent>>, TError,{data: BodyType<TradeIntentRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof generateTradeIntent>>,
+        TError,
+        {data: BodyType<TradeIntentRequest>},
+        TContext
+      > => {
+      return useMutation(getGenerateTradeIntentMutationOptions(options));
+    }
+
+export const getApproveTradeIntentUrl = (id: number,) => {
+
+
+
+
+  return `/api/agent-feed/${id}/approve`
+}
+
+/**
+ * @summary Approve an intent into simulated paper trading
+ */
+export const approveTradeIntent = async (id: number, options?: RequestInit): Promise<TradeIntent> => {
+
+  return customFetch<TradeIntent>(getApproveTradeIntentUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getApproveTradeIntentMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof approveTradeIntent>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof approveTradeIntent>>, TError,{id: number}, TContext> => {
+
+const mutationKey = ['approveTradeIntent'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof approveTradeIntent>>, {id: number}> = (props) => {
+          const {id} = props ?? {};
+
+          return  approveTradeIntent(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ApproveTradeIntentMutationResult = NonNullable<Awaited<ReturnType<typeof approveTradeIntent>>>
+
+    export type ApproveTradeIntentMutationError = ErrorType<ErrorResponse>
+
+    /**
+ * @summary Approve an intent into simulated paper trading
+ */
+export const useApproveTradeIntent = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof approveTradeIntent>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof approveTradeIntent>>,
+        TError,
+        {id: number},
+        TContext
+      > => {
+      return useMutation(getApproveTradeIntentMutationOptions(options));
+    }
+
+export const getRejectTradeIntentUrl = (id: number,) => {
+
+
+
+
+  return `/api/agent-feed/${id}/reject`
+}
+
+/**
+ * @summary Reject an intent without trading
+ */
+export const rejectTradeIntent = async (id: number,
+    tradeIntentRejection?: TradeIntentRejection, options?: RequestInit): Promise<TradeIntent> => {
+
+  return customFetch<TradeIntent>(getRejectTradeIntentUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(tradeIntentRejection)
+  }
+);}
+
+
+
+
+
+export const getRejectTradeIntentMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof rejectTradeIntent>>, TError,{id: number;data?: BodyType<TradeIntentRejection>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof rejectTradeIntent>>, TError,{id: number;data?: BodyType<TradeIntentRejection>}, TContext> => {
+
+const mutationKey = ['rejectTradeIntent'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof rejectTradeIntent>>, {id: number;data?: BodyType<TradeIntentRejection>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  rejectTradeIntent(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RejectTradeIntentMutationResult = NonNullable<Awaited<ReturnType<typeof rejectTradeIntent>>>
+    export type RejectTradeIntentMutationBody = BodyType<TradeIntentRejection> | undefined
+    export type RejectTradeIntentMutationError = ErrorType<ErrorResponse>
+
+    /**
+ * @summary Reject an intent without trading
+ */
+export const useRejectTradeIntent = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof rejectTradeIntent>>, TError,{id: number;data?: BodyType<TradeIntentRejection>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof rejectTradeIntent>>,
+        TError,
+        {id: number;data?: BodyType<TradeIntentRejection>},
+        TContext
+      > => {
+      return useMutation(getRejectTradeIntentMutationOptions(options));
     }
 
 export const getUpdateTradingModeUrl = () => {

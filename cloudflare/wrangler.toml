@@ -1,0 +1,24 @@
+# Tradora edge Worker — keep the name and custom domain that are already live.
+# Deploys are reproducible from GitHub Actions (.github/workflows/deploy-worker.yml).
+name = "tradora-edge-api"
+main = "tradora-edge-worker.mjs"
+compatibility_date = "2026-11-01"
+
+# The Worker is only reachable through the custom domain; no workers.dev URL.
+workers_dev = false
+
+# Custom domain already attached in the Cloudflare dashboard (zone kpnsolute.com).
+routes = [{ pattern = "tradora.kpnsolute.com/*", zone_name = "kpnsolute.com" }]
+
+[vars]
+ORIGIN_URL = "https://tradora.onrender.com"
+# Everything under /engine is rewritten onto this service. The path itself is
+guarded by a Cloudflare Access application; the service token stays in Render's
+# environment, never in this file.
+ENGINE_URL = "https://tradora-engine.onrender.com"
+
+[observability]
+enabled = true
+
+# The origin hostname is a public Render URL, not a secret: pass it as a plain
+# variable. No broker keys, session secrets or service tokens belong here.

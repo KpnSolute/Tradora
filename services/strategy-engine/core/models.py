@@ -19,6 +19,11 @@ class SignalDirection(str, Enum):
     HOLD = "hold"
 
 
+class IntentSide(str, Enum):
+    BUY = "buy"
+    SELL = "sell"
+
+
 class EventType(str, Enum):
     SIGNAL_GENERATED = "signal_generated"
     ORDER_SUBMITTED = "order_submitted"
@@ -58,6 +63,40 @@ class Event(BaseModel):
     strategy_name: str | None = None
     severity: str = "info"
     payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class AnalystRequest(BaseModel):
+    """Bars plus the account context needed to size a paper intent."""
+
+    symbol: str = Field(min_length=3, max_length=24)
+    asset_class: AssetClass = AssetClass.CRYPTO
+    bars: list[Bar] = Field(min_length=1)
+    mode: str = "analysis"
+    equity: float = Field(default=10_000.0, gt=0)
+    risk_pct_of_equity: float | None = Field(default=None, gt=0, le=100)
+    timeframe: str = Field(default="1h", pattern=r"^(15m|1h|4h|1d)$")
+
+
+class TradeIntent(BaseModel):
+    """A paper-only proposal a human can approve or reject."""
+
+    intent_id: str = Field(default_factory=lambda: str(uuid4()))
+    symbol: str
+    asset_class: AssetClass
+    side: IntentSide
+    quantity: float = Field(gt=0)
+    order_type: str = "market"
+    reference_price: float = Field(gt=0)
+    stop_loss: float = Field(gt=0)
+    take_profit: float = Field(gt=0)
+    confidence: float = Field(ge=0.0, le=1.0)
+    thesis: str = Field(min_length=20)
+    strategy_name: str
+    strategy_version: str
+    timeframe: str = "1h"
+    mode: str
+    generated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    indicators: dict[str, float] = Field(default_factory=dict)
 
 
 class KillSwitchRequest(BaseModel):

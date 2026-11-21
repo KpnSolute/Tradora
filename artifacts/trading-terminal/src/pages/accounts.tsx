@@ -246,7 +246,7 @@ export default function Accounts() {
 
   const onSubmit = (data: ConnectForm) => {
     connectAcc.mutate(
-      { data: { exchange: data.exchange, label: data.label, apiKey: data.apiKey, apiSecret: data.apiSecret, mode: data.mode } },
+      { data: { exchange: data.exchange, label: data.label.trim(), apiKey: data.apiKey.trim(), apiSecret: data.apiSecret.trim(), mode: data.mode } },
       {
         onSuccess: () => {
           queryClient.invalidateQueries({ queryKey: getListAccountsQueryKey() });

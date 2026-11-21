@@ -1,7 +1,4 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
-import { z } from 'zod';
 import {
   useListAutomations,
   useCreateAutomation,
@@ -11,24 +8,11 @@ import {
   getListAutomationsQueryKey,
 } from '@workspace/api-client-react';
 import { useQueryClient } from '@tanstack/react-query';
-import { Zap, Plus, Trash2, CheckCircle, XCircle, Clock, AlertTriangle, Activity } from 'lucide-react';
+import { Zap, Plus, Trash2, CheckCircle, XCircle, Activity, AlertTriangle, RotateCcw } from 'lucide-react';
 import { cn, formatCompactPrice } from '@/lib/utils';
 import { toast } from '@/hooks/use-toast';
 import { useAuth } from '@/lib/auth';
-
-const BROKERS = ['paper', 'alpaca', 'coinbase', 'binance', 'kraken', 'bybit'] as const;
-
-const automationSchema = z.object({
-  symbol:       z.string().min(1, 'Symbol required'),
-  condition:    z.enum(['gte', 'lte']),
-  triggerPrice: z.coerce.number().positive('Price must be positive'),
-  side:         z.enum(['buy', 'sell']),
-  quantity:     z.coerce.number().positive('Quantity must be positive'),
-  orderType:    z.enum(['market', 'limit']).default('market'),
-  limitPrice:   z.coerce.number().positive().optional(),
-  broker:       z.enum(['paper', 'alpaca', 'coinbase', 'binance', 'kraken', 'bybit']).default('paper'),
-});
-type AutomationForm = z.infer<typeof automationSchema>;
+import { RuleFields, BROKER_LABELS, type RuleValue } from '@/components/rule-fields';
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; Icon: React.ElementType }> = {
   active:    { label: 'WATCHING',   color: 'text-primary',         Icon: Activity },
@@ -38,19 +22,21 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; Icon: React.
   cancelled: { label: 'CANCELLED',  color: 'text-muted-foreground', Icon: XCircle },
 };
 
-const BROKER_LABELS: Record<string, string> = {
-  paper:    'Paper (Local)',
-  alpaca:   'Alpaca',
-  coinbase: 'Coinbase',
-  binance:  'Binance',
-  kraken:   'Kraken',
-  bybit:    'Bybit',
+const EMPTY_RULE: RuleValue = {
+  symbol: '',
+  condition: 'lte',
+  triggerPrice: 0,
+  side: 'buy',
+  quantity: 0,
+  orderType: 'market',
+  limitPrice: null,
+  broker: 'paper',
 };
 
 export default function Automations() {
   const queryClient = useQueryClient();
   const { user } = useAuth();
-  const { data: automations, isLoading } = useListAutomations({ query: { refetchInterval: 5000 } });
+  const { data: automations, isLoading } = useListAutomations({ query: { queryKey: getListAutomationsQueryKey(), refetchInterval: 5000 } });
   const { data: accounts } = useListAccounts();
   const { data: markets } = useListMarkets();
   const createAuto = useCreateAutomation();
@@ -58,6 +44,11 @@ export default function Automations() {
 
   const connectedBrokers = new Set<string>(['paper']);
   accounts?.filter(a => a.status === 'active').forEach(a => connectedBrokers.add(a.exchange));
+  const brokerOptions = Array.from(connectedBrokers);
+
+  const [rule, setRule] = useState<RuleValue>(EMPTY_RULE);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [retryingId, setRetryingId] = useState<number | null>(null);
 
   // ── WebSocket: listen for real-time automation events ──────────────────────
   const wsRef = useRef<WebSocket | null>(null);
@@ -123,24 +114,72 @@ export default function Automations() {
     };
   }, [queryClient]);
 
-  const [orderType, setOrderType] = useState<'market' | 'limit'>('market');
+  // Default to a broker the user has actually connected, so the rule is created
+  // against a real account instead of silently falling back to local paper fills.
+  const connectedBrokerKey = accounts?.filter(a => a.status === 'active').map(a => a.exchange).join(',');
+  useEffect(() => {
+    const first = accounts?.find(a => a.status === 'active');
+    if (first) setRule(r => ({ ...r, broker: first.exchange }));
+  }, [connectedBrokerKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const { register, handleSubmit, watch, reset, formState: { errors } } = useForm<AutomationForm>({
-    resolver: zodResolver(automationSchema),
-    defaultValues: { condition: 'lte', side: 'buy', orderType: 'market', broker: 'paper' },
-  });
+  const onSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setFormError(null);
 
-  const watchedSide = watch('side');
-  const watchedCondition = watch('condition');
-  const watchedBroker = watch('broker');
+    if (!rule.symbol) return setFormError('Pick a symbol.');
+    if (!(rule.triggerPrice > 0)) return setFormError('Trigger price must be positive.');
+    if (!(rule.quantity > 0)) return setFormError('Quantity must be positive.');
+    if (rule.orderType === 'limit' && !((rule.limitPrice ?? 0) > 0)) {
+      return setFormError('A limit order needs a positive limit price.');
+    }
 
-  const onSubmit = (data: AutomationForm) => {
-    createAuto.mutate({ data }, {
-      onSuccess: () => {
-        reset({ condition: 'lte', side: 'buy', orderType: 'market', broker: 'paper' });
-        queryClient.invalidateQueries({ queryKey: getListAutomationsQueryKey() });
+    createAuto.mutate(
+      {
+        data: {
+          symbol: rule.symbol,
+          condition: rule.condition,
+          triggerPrice: Number(rule.triggerPrice),
+          side: rule.side,
+          quantity: Number(rule.quantity),
+          orderType: rule.orderType,
+          limitPrice: rule.orderType === 'limit' ? Number(rule.limitPrice) : undefined,
+          broker: rule.broker,
+        } as any,
       },
-    });
+      {
+        onSuccess: () => {
+          setRule({ ...EMPTY_RULE, broker: rule.broker });
+          queryClient.invalidateQueries({ queryKey: getListAutomationsQueryKey() });
+        },
+      },
+    );
+  };
+
+  // Re-arm a rule that failed so it watches its trigger again; it fires on the
+  // next tick that still matches.
+  const handleRetry = async (id: number) => {
+    setRetryingId(id);
+    try {
+      const res = await fetch(`/api/automations/${id}/retry`, { method: 'POST', credentials: 'same-origin' });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast({
+          title: 'Could not retry rule',
+          description: body?.error ?? 'Unknown error',
+          variant: 'destructive',
+        });
+        return;
+      }
+      queryClient.invalidateQueries({ queryKey: getListAutomationsQueryKey() });
+      toast({
+        title: 'Rule re-armed',
+        description: `Watching ${body.symbol} again — fires when price ${body.condition === 'gte' ? '≥' : '≤'} ${formatCompactPrice(body.triggerPrice)}.`,
+      });
+    } catch (err) {
+      toast({ title: 'Could not retry rule', description: (err as Error).message, variant: 'destructive' });
+    } finally {
+      setRetryingId(null);
+    }
   };
 
   const handleDelete = (id: number) => {
@@ -237,6 +276,17 @@ export default function Automations() {
 
                 {/* Actions */}
                 <div className="flex items-center gap-2 shrink-0">
+                  {(rule.status === 'failed' || rule.status === 'triggered') && (
+                    <button
+                      onClick={() => handleRetry(rule.id)}
+                      disabled={retryingId === rule.id}
+                      className="flex items-center gap-1 px-3 py-1.5 border border-yellow-500/40 text-yellow-400 hover:bg-yellow-500/10 transition-colors text-xs disabled:opacity-50"
+                      title="Re-arm this rule and try again"
+                    >
+                      <RotateCcw className="w-3 h-3" />
+                      {retryingId === rule.id ? 'RETRYING…' : 'RETRY'}
+                    </button>
+                  )}
                   {(rule.status === 'active') && (
                     <button
                       onClick={() => handleDelete(rule.id)}
@@ -269,133 +319,33 @@ export default function Automations() {
           <h2 className="text-xs font-bold tracking-widest text-muted-foreground">NEW RULE</h2>
 
           <div className="p-5 border border-border bg-card">
-            <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+            <form onSubmit={onSubmit} className="space-y-4">
+              <RuleFields
+                value={rule}
+                onChange={patch => setRule(r => ({ ...r, ...patch }))}
+                symbols={markets ?? []}
+                brokers={brokerOptions}
+              />
 
-              {/* Symbol */}
-              <div>
-                <label className="block text-[10px] text-muted-foreground mb-1">SYMBOL</label>
-                <select
-                  {...register('symbol')}
-                  className="w-full bg-input border border-border text-foreground px-3 py-2 text-xs focus:outline-none focus:border-primary appearance-none"
-                >
-                  <option value="">Select symbol…</option>
-                  {markets?.map(m => (
-                    <option key={m.symbol} value={m.symbol}>{m.symbol}</option>
-                  ))}
-                </select>
-                {errors.symbol && <p className="text-down text-[10px] mt-1">{errors.symbol.message}</p>}
-              </div>
-
-              {/* Condition + Trigger Price */}
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="block text-[10px] text-muted-foreground mb-1">WHEN PRICE</label>
-                  <select
-                    {...register('condition')}
-                    className="w-full bg-input border border-border text-foreground px-3 py-2 text-xs focus:outline-none focus:border-primary appearance-none"
-                  >
-                    <option value="lte">≤ (drops to)</option>
-                    <option value="gte">≥ (rises to)</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-[10px] text-muted-foreground mb-1">PRICE ($)</label>
-                  <input
-                    {...register('triggerPrice')}
-                    type="number"
-                    step="any"
-                    placeholder="0.00"
-                    className="w-full bg-input border border-border text-foreground px-3 py-2 text-xs focus:outline-none focus:border-primary"
-                  />
-                  {errors.triggerPrice && <p className="text-down text-[10px] mt-1">{errors.triggerPrice.message}</p>}
-                </div>
-              </div>
-
-              {/* Side */}
-              <div>
-                <label className="block text-[10px] text-muted-foreground mb-1">ACTION</label>
-                <div className="grid grid-cols-2 gap-0 border border-border">
-                  {(['buy', 'sell'] as const).map(s => (
-                    <label key={s} className={cn(
-                      'flex items-center justify-center gap-1.5 py-2 cursor-pointer text-xs font-bold tracking-widest transition-colors',
-                      watchedSide === s
-                        ? s === 'buy' ? 'bg-up/20 text-up' : 'bg-down/20 text-down'
-                        : 'text-muted-foreground hover:bg-muted/50',
-                    )}>
-                      <input type="radio" {...register('side')} value={s} className="sr-only" />
-                      {s.toUpperCase()}
-                    </label>
-                  ))}
-                </div>
-              </div>
-
-              {/* Quantity */}
-              <div>
-                <label className="block text-[10px] text-muted-foreground mb-1">QUANTITY</label>
-                <input
-                  {...register('quantity')}
-                  type="number"
-                  step="any"
-                  placeholder="0.001"
-                  className="w-full bg-input border border-border text-foreground px-3 py-2 text-xs focus:outline-none focus:border-primary"
-                />
-                {errors.quantity && <p className="text-down text-[10px] mt-1">{errors.quantity.message}</p>}
-              </div>
-
-              {/* Order type */}
-              <div>
-                <label className="block text-[10px] text-muted-foreground mb-1">ORDER TYPE</label>
-                <div className="grid grid-cols-2 gap-0 border border-border">
-                  {(['market', 'limit'] as const).map(t => (
-                    <label key={t} className={cn(
-                      'flex items-center justify-center gap-1.5 py-2 cursor-pointer text-xs font-bold tracking-widest transition-colors',
-                      orderType === t ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:bg-muted/50',
-                    )}>
-                      <input type="radio" {...register('orderType')} value={t} className="sr-only" onChange={() => setOrderType(t)} />
-                      {t.toUpperCase()}
-                    </label>
-                  ))}
-                </div>
-              </div>
-
-              {orderType === 'limit' && (
-                <div>
-                  <label className="block text-[10px] text-muted-foreground mb-1">LIMIT PRICE ($)</label>
-                  <input
-                    {...register('limitPrice')}
-                    type="number"
-                    step="any"
-                    placeholder="0.00"
-                    className="w-full bg-input border border-border text-foreground px-3 py-2 text-xs focus:outline-none focus:border-primary"
-                  />
-                </div>
-              )}
-
-              {/* Broker */}
-              <div>
-                <label className="block text-[10px] text-muted-foreground mb-1">EXECUTE VIA</label>
-                <select
-                  {...register('broker')}
-                  className="w-full bg-input border border-border text-foreground px-3 py-2 text-xs focus:outline-none focus:border-primary appearance-none"
-                >
-                  {BROKERS.filter(b => connectedBrokers.has(b)).map(b => (
-                    <option key={b} value={b}>{BROKER_LABELS[b]}</option>
-                  ))}
-                </select>
-              </div>
+              <p className="text-[10px] text-muted-foreground">
+                Triggers evaluate on the live crypto ticks this server streams; stock symbols need a price feed that isn't wired up yet.
+              </p>
 
               {/* Preview */}
               <div className="p-3 bg-muted/30 border border-border text-[10px] text-muted-foreground leading-relaxed">
                 <AlertTriangle className="w-3 h-3 inline mb-0.5 mr-1" />
-                When price <strong className="text-foreground">{watchedCondition === 'gte' ? '≥' : '≤'}</strong> trigger,
-                place a <strong className="text-foreground">{watchedSide} {orderType}</strong> order
-                via <strong className="text-foreground">{BROKER_LABELS[watchedBroker] ?? watchedBroker}</strong>.
+                When price <strong className="text-foreground">{rule.condition === 'gte' ? '≥' : '≤'}</strong> trigger,
+                place a <strong className="text-foreground">{rule.side} {rule.orderType}</strong> order
+                via <strong className="text-foreground">{BROKER_LABELS[rule.broker] ?? rule.broker}</strong>.
                 Rule fires <strong className="text-foreground">once</strong> and auto-completes.
               </div>
 
-              {createAuto.error && (
+              {(formError || createAuto.error) && (
                 <div className="text-down text-[10px] p-2 bg-down/10 border border-down/30">
-                  {(createAuto.error as any)?.error ?? 'Failed to create rule'}
+                  {formError
+                    ?? (createAuto.error as any)?.data?.error
+                    ?? (createAuto.error as any)?.message
+                    ?? 'Failed to create rule'}
                 </div>
               )}
 
@@ -415,8 +365,9 @@ export default function Automations() {
             <div className="font-bold text-foreground text-xs mb-2">HOW IT WORKS</div>
             <div className="flex items-start gap-2"><Zap className="w-3 h-3 mt-0.5 shrink-0 text-primary" /> Rules fire the instant a live price tick crosses your trigger</div>
             <div className="flex items-start gap-2"><CheckCircle className="w-3 h-3 mt-0.5 shrink-0 text-up" /> Each rule fires once, then marks itself completed</div>
-            <div className="flex items-start gap-2"><Activity className="w-3 h-3 mt-0.5 shrink-0 text-primary" /> Paper rules use local simulated fills, no real funds</div>
-            <div className="flex items-start gap-2"><AlertTriangle className="w-3 h-3 mt-0.5 shrink-0 text-yellow-400" /> Live broker rules place real orders — use with care</div>
+            <div className="flex items-start gap-2"><Activity className="w-3 h-3 mt-0.5 shrink-0 text-primary" /> Paper rules fill locally in the trade log, no broker contacted</div>
+            <div className="flex items-start gap-2"><RotateCcw className="w-3 h-3 mt-0.5 shrink-0 text-yellow-400" /> A failed rule stays put until you retry it — RETRY re-arms it against the same trigger</div>
+            <div className="flex items-start gap-2"><AlertTriangle className="w-3 h-3 mt-0.5 shrink-0 text-yellow-400" /> Broker rules go through the execution gateway: dry-run unless live mode is on, capped at $1,000 per order</div>
           </div>
         </div>
       </div>

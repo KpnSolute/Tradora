@@ -12,13 +12,15 @@ import {
   updateTickerFromStream,
   fromKrakenWsSymbol,
   getTickers,
+  refreshTickersFromRest,
+  startTickerWatchdog,
 } from "./market-data";
 import type { TickerData } from "./market-data";
 import { db, automationsTable, tradesTable, tradingAccountsTable } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
+import { getTicker, resolveMarket, streamRequestSymbols } from "./market-data";
+import { executeOrderIntent, submitOrderIntent } from "./execution-gateway";
 import { getBrokerClient } from "./broker-factory";
-import { getTicker } from "./market-data";
-import { assertOrderPlacementQuarantined } from "./order-quarantine";
 
 // ─── Frontend client subscriptions ───────────────────────────────────────────
 
@@ -64,6 +66,10 @@ async function evaluateAutomations(symbol: string, price: number): Promise<void>
 }
 
 async function fireAutomation(rule: any, currentPrice: number): Promise<void> {
+  let dryRun = false;
+  let intentMessage: string | undefined;
+  let liveOrder: { id: string; status: string } | null = null;
+
   // Mark triggered immediately
   await db
     .update(automationsTable)
@@ -71,13 +77,27 @@ async function fireAutomation(rule: any, currentPrice: number): Promise<void> {
     .where(eq(automationsTable.id, rule.id));
 
   try {
-    assertOrderPlacementQuarantined("WebSocket automation execution");
-
     const qty = parseFloat(rule.quantity);
     const limitPrice = rule.limitPrice ? parseFloat(rule.limitPrice) : undefined;
 
     if (rule.broker === "paper") {
-      // Paper: insert into local trades table
+      // Paper fills are simulated locally, but they still pass the gateway so the
+      // kill switch stops them and the fill lands in the audit trail.
+      const decision = submitOrderIntent({
+        source: "automation:paper",
+        userId: rule.userId,
+        broker: "paper",
+        accountMode: "paper",
+        localFill: true,
+        symbol: rule.symbol,
+        side: rule.side,
+        type: rule.orderType === "limit" ? "limit" : "market",
+        qty,
+        limitPrice,
+        referencePrice: currentPrice,
+      });
+      if (decision.outcome !== "paper_local") throw new Error(decision.message);
+
       const price = limitPrice ?? currentPrice;
       await db.insert(tradesTable).values({
         userId: rule.userId,
@@ -92,8 +112,10 @@ async function fireAutomation(rule: any, currentPrice: number): Promise<void> {
         filledAt: new Date(),
       });
     } else {
-      // Live: find user's connected broker account and place real order
-      const rows = await db
+      // Broker-bound rules go through the execution gateway: the intended order is
+      // validated, notional-capped and written to the audit trail. Live execution is
+      // still quarantined, so dry_run is the only outcome that gets this far.
+      const accountRows = await db
         .select()
         .from(tradingAccountsTable)
         .where(
@@ -105,17 +127,43 @@ async function fireAutomation(rule: any, currentPrice: number): Promise<void> {
         )
         .limit(1);
 
-      if (rows.length === 0) throw new Error(`No active ${rule.broker} account`);
+      if (accountRows.length === 0) throw new Error("No active " + rule.broker + " account");
 
-      const accountRow = rows[0];
-      const client = getBrokerClient(accountRow);
-      await client.placeOrder({
-        symbol: rule.symbol,
-        side: rule.side,
-        type: rule.orderType as "market" | "limit",
-        qty,
-        limitPrice,
-      });
+      const accountRow = accountRows[0];
+      const decision = await executeOrderIntent(
+        {
+          source: "automation",
+          userId: rule.userId,
+          broker: rule.broker,
+          accountMode: accountRow.mode === "live" ? "live" : "paper",
+          localFill: false,
+          symbol: rule.symbol,
+          side: rule.side,
+          type: rule.orderType === "limit" ? "limit" : "market",
+          qty,
+          limitPrice,
+          referencePrice: currentPrice,
+        },
+        intent =>
+          getBrokerClient(accountRow).placeOrder({
+            symbol: intent.symbol,
+            side: intent.side,
+            type: intent.type,
+            qty: intent.qty,
+            limitPrice: intent.limitPrice,
+          }),
+      );
+
+      if (decision.outcome === "blocked") throw new Error(decision.message);
+      if (decision.outcome === "dry_run") {
+        dryRun = true;
+        intentMessage = decision.message;
+      }
+      if (decision.outcome === "live") {
+        const placed = decision.broker as any;
+        liveOrder = { id: String(placed?.id ?? ""), status: String(placed?.status ?? "submitted") };
+        intentMessage = decision.message;
+      }
     }
 
     await db
@@ -123,7 +171,10 @@ async function fireAutomation(rule: any, currentPrice: number): Promise<void> {
       .set({ status: "completed" })
       .where(eq(automationsTable.id, rule.id));
 
-    logger.info({ ruleId: rule.id, broker: rule.broker, side: rule.side, qty: rule.quantity }, "Automation completed");
+    logger.info(
+      { ruleId: rule.id, broker: rule.broker, side: rule.side, qty: rule.quantity, dryRun, liveOrder },
+      "Automation completed",
+    );
 
     broadcastToUser(rule.userId, {
       type: "automation_fired",
@@ -134,6 +185,9 @@ async function fireAutomation(rule: any, currentPrice: number): Promise<void> {
       broker: rule.broker,
       triggerPrice: rule.triggerPrice,
       currentPrice,
+      dryRun,
+      liveOrder,
+      intentMessage,
     });
   } catch (err: any) {
     const failureReason: string = err?.message ?? "Unknown error";
@@ -156,6 +210,60 @@ async function fireAutomation(rule: any, currentPrice: number): Promise<void> {
   }
 }
 
+// ─── Kraken subscriptions ─────────────────────────────────────────────────────
+
+// The default pairs are always streamed; discovered tokens are added on demand so
+// a token you find also ticks live and its automations can trigger.
+let krakenStream: WebSocket | null = null;
+const streamedPairs = new Set<string>();
+
+async function ensureStreamed(symbols: string[]): Promise<void> {
+  const wanted: string[] = [];
+  for (const symbol of symbols) {
+    const meta = await resolveMarket(symbol);
+    if (!meta || streamedPairs.has(meta.wsSymbol)) continue;
+    streamedPairs.add(meta.wsSymbol);
+    wanted.push(meta.wsSymbol);
+  }
+  if (wanted.length === 0) return;
+
+  if (krakenStream?.readyState === WebSocket.OPEN) {
+    krakenStream.send(JSON.stringify({
+      method: "subscribe",
+      params: { channel: "ticker", symbol: wanted },
+    }));
+    logger.info({ pairs: wanted }, "Subscribed to additional Kraken tickers");
+  } else {
+    // Not connected: forget them so the next connect subscribes to everything again.
+    for (const pair of wanted) streamedPairs.delete(pair);
+  }
+}
+
+// Sweep rule symbols that may not be in the stream (a rule can watch any listed
+// token), so an automation still fires on a token nobody is subscribed to.
+async function sweepAutomations(): Promise<void> {
+  try {
+    const rules = await db
+      .select()
+      .from(automationsTable)
+      .where(eq(automationsTable.status, "active"));
+    const symbols = [...new Set(rules.map(rule => rule.symbol))];
+    if (symbols.length === 0) return;
+
+    await ensureStreamed(symbols);
+    for (const symbol of symbols) {
+      const ticker = await getTicker(symbol);
+      if (ticker) await evaluateAutomations(symbol, ticker.price);
+    }
+  } catch (err) {
+    logger.warn({ err }, "Automation sweep error");
+  }
+}
+
+function startAutomationSweep(intervalMs = 20_000): void {
+  setInterval(() => { sweepAutomations().catch(() => {}); }, intervalMs);
+}
+
 // ─── Kraken WebSocket v2 public stream ────────────────────────────────────────
 
 const KRAKEN_WS_URL = "wss://ws.kraken.com/v2";
@@ -172,11 +280,13 @@ function connectKrakenStream(): void {
 
   ws.on("open", () => {
     logger.info("Kraken WS v2 connected — subscribing to live tickers");
-    const symbols = SUPPORTED_MARKETS.map(m => m.wsSymbol);
-    ws.send(JSON.stringify({
-      method: "subscribe",
-      params: { channel: "ticker", symbol: symbols },
-    }));
+    krakenStream = ws;
+    streamedPairs.clear();
+    const symbols = [...new Set([
+      ...SUPPORTED_MARKETS.map(m => m.symbol),
+      ...streamRequestSymbols(),
+    ])];
+    ensureStreamed(symbols).catch(err => logger.warn({ err }, "Kraken subscribe failed"));
   });
 
   ws.on("message", (raw: Buffer) => {
@@ -222,6 +332,8 @@ function connectKrakenStream(): void {
   });
 
   ws.on("close", (code, reason) => {
+    krakenStream = null;
+    streamedPairs.clear();
     logger.info({ code, reason: reason.toString() }, "Kraken WS closed — reconnecting in 5s");
     setTimeout(connectKrakenStream, 5_000);
   });
@@ -250,6 +362,7 @@ function broadcastTicker(ticker: TickerData): void {
     high24h:      ticker.high24h,
     low24h:       ticker.low24h,
     volume24h:    ticker.volume24h,
+    updatedAt:    ticker.updatedAt,
   });
   for (const client of clients) {
     if (client.ws.readyState !== WebSocket.OPEN) continue;
@@ -269,6 +382,7 @@ async function sendInitialTickers(client: SubscribedClient): Promise<void> {
         type: "ticker", symbol: ticker.symbol, price: ticker.price,
         change24h: ticker.change24h, changePct24h: ticker.changePct24h,
         high24h: ticker.high24h, low24h: ticker.low24h, volume24h: ticker.volume24h,
+        updatedAt: ticker.updatedAt,
       }));
     } catch { /* ignore */ }
   }
@@ -286,6 +400,12 @@ function parseSession(req: IncomingMessage): Promise<void> {
 }
 
 export function createWebSocketServer(server: import("http").Server): WebSocketServer {
+  // Price the cache from Kraken REST before anything can be served, so a cold
+  // start answers with a real quote instead of a placeholder. The watchdog then
+  // refetches whenever the stream goes quiet, so prices never sit frozen.
+  void refreshTickersFromRest();
+  startTickerWatchdog();
+  startAutomationSweep();
   connectKrakenStream();
 
   const wss = new WebSocketServer({ server, path: "/ws" });
@@ -307,6 +427,8 @@ export function createWebSocketServer(server: import("http").Server): WebSocketS
           // userId is already set from the session; ignore any client-provided value
           logger.info({ symbols: [...client.symbols], userId: client.userId }, "Client subscribed");
           sendInitialTickers(client);
+          // A discovered token needs a live stream too, not just a REST snapshot.
+          ensureStreamed([...client.symbols]).catch(() => {});
         }
         if (msg.type === "unsubscribe" && Array.isArray(msg.symbols)) {
           for (const s of msg.symbols) client.symbols.delete(s);
